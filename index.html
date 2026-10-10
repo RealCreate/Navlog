@@ -51,6 +51,7 @@
     <label class="radio"><input type="radio" name="base" value="vfr" checked> ENAIRE VFR 1:500 000</label>
     <label class="radio"><input type="radio" name="base" value="topo"> Terrain (OpenTopoMap)</label>
     <div class="pop-sep"></div>
+    <label class="check"><input type="checkbox" id="chkNames" checked> Town &amp; village names</label>
     <label class="check"><input type="checkbox" id="chkPoints" checked> Aerodromes &amp; VRPs</label>
     <label class="check"><input type="checkbox" id="chkMarks" checked> 2-minute marks</label>
     <div class="pop-sep"></div>
@@ -67,6 +68,13 @@
   <section class="sheet glass-heavy" id="sheet" aria-label="Flight plan">
     <div class="grabber" id="grabber"><span></span></div>
 
+    <div class="modebar">
+      <div class="segmented" id="modes" role="tablist" aria-label="Section">
+        <button role="tab" data-mode="plan" class="on">Flight plan</button>
+        <button role="tab" data-mode="mb">Mass &amp; Balance</button>
+      </div>
+    </div>
+
     <div class="summary" id="summary">
       <div class="stat"><span class="k">Distance</span><span class="v" id="sDist">0 NM</span></div>
       <div class="stat"><span class="k">Time</span><span class="v" id="sTime">00:00:00</span></div>
@@ -78,12 +86,22 @@
       </button>
     </div>
 
-    <div class="tabs">
+    <div class="summary" id="mbSummary" hidden>
+      <div class="stat"><span class="k">Takeoff mass</span><span class="v" id="mTom">—</span></div>
+      <div class="stat"><span class="k">TO CG</span><span class="v" id="mCg">—</span></div>
+      <div class="stat"><span class="k">Landing mass</span><span class="v" id="mLm">—</span></div>
+      <button class="btn primary" id="btnMbPdf" type="button">
+        <svg viewBox="0 0 24 24"><path d="M12 3v12m0 0-4-4m4 4 4-4M5 19h14"/></svg>
+        <span>M&amp;B PDF</span>
+      </button>
+    </div>
+
+    <div class="tabs" id="planTabs">
       <div class="segmented" id="tabs" role="tablist">
         <button role="tab" data-tab="route" class="on">Route</button>
         <button role="tab" data-tab="navlog">Navlog</button>
         <button role="tab" data-tab="fuel">Fuel</button>
-        <button role="tab" data-tab="mb">M&amp;B</button>
+        <button role="tab" data-tab="profile" class="narrow-only">Profile</button>
       </div>
       <div class="segmented small" id="routeSel">
         <button data-route="main" class="on">Main</button>
@@ -95,8 +113,19 @@
       <div class="panel" data-panel="route"></div>
       <div class="panel" data-panel="navlog" hidden></div>
       <div class="panel" data-panel="fuel" hidden></div>
+      <div class="panel" data-panel="profile" hidden><div class="profile-panel"><canvas id="profileCanvasSheet"></canvas></div><p class="note" id="profileNoteSheet"></p></div>
       <div class="panel" data-panel="mb" hidden></div>
     </div>
+  </section>
+
+  <!-- Vertical profile (SkyDemon style), docked at the bottom on wide screens -->
+  <section class="profile-dock glass-heavy" id="profileDock" aria-label="Vertical profile">
+    <div class="profile-head">
+      <span class="profile-title">Profile</span>
+      <span class="profile-info" id="profileInfo"></span>
+      <button class="icon-btn" id="profileToggle" type="button" aria-label="Collapse profile"><svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button>
+    </div>
+    <div class="profile-body"><canvas id="profileCanvas"></canvas></div>
   </section>
 
   <div class="toast glass" id="toast" hidden></div>

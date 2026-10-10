@@ -39,7 +39,7 @@ for url in "$@"; do
   fi
 
   # Reproject to Web Mercator with an alpha band so the area outside the sheet is transparent.
-  gdalwarp -q -overwrite -t_srs EPSG:3857 -r bilinear -dstalpha -multi -wo NUM_THREADS=ALL_CPUS \
+  gdalwarp -q -overwrite -t_srs EPSG:3857 -r cubic -dstalpha -multi -wo NUM_THREADS=ALL_CPUS \
     -co TILED=YES -co COMPRESS=DEFLATE -co BIGTIFF=IF_SAFER "$src" "$WORK/$name-3857.tif"
   warped+=("$WORK/$name-3857.tif")
 
@@ -51,8 +51,8 @@ gdalbuildvrt -q "$WORK/mosaic.vrt" "${warped[@]}"
 gdalinfo "$WORK/mosaic.vrt" | head -30
 
 echo "::group::gdal2tiles z$ZMIN-$ZMAX"
-gdal2tiles.py --xyz -z "$ZMIN-$ZMAX" -w none -r average \
-  --tiledriver=WEBP --webp-quality=80 \
+gdal2tiles.py --xyz -z "$ZMIN-$ZMAX" -w none -r lanczos \
+  --tiledriver=WEBP --webp-quality=92 \
   --processes="$(nproc)" "$WORK/mosaic.vrt" "$OUT"
 echo "::endgroup::"
 

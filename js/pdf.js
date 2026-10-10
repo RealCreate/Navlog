@@ -164,3 +164,55 @@ function fillHeader(page, font, bold, h) {
   if (h.weather) { const [x0, x1, t, b] = HDR.weather; page.drawText(String(h.weather), { x: x0 + 4, y: H - (t + b) / 2 - 3, size: 7.5, font, maxWidth: x1 - x0 - 8 }); }
   if (h.freq) { const [x0, x1, t, b] = HDR.freq; page.drawText(String(h.freq), { x: x0 + 4, y: H - (t + b) / 2 - 3, size: 8.5, font }); }
 }
+
+/* ---------------- Mass & balance sheet (P2008 JC form) ---------------- */
+
+const MB_H = 841.92; // A4 portrait
+let mbTemplateBytes = null;
+
+/**
+ * mb: { date, reg, studentCode, weather, notams, rows: { empty, pilot, copilot, baggage, fuel, trip }
+ *        each [mass, arm, moment], to: [mass, cg, moment], ldg: [mass, cg, moment] }
+ */
+export async function buildMbPdf(mb) {
+  const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
+  if (!mbTemplateBytes) mbTemplateBytes = await (await fetch('assets/mb-p2008-template.pdf')).arrayBuffer();
+  const doc = await PDFDocument.load(mbTemplateBytes);
+  const page = doc.getPages()[0];
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  const cell = (text, [x0, x1], yTop, yBottom, f = font, size = 10, color) => {
+    if (text == null || text === '') return;
+    text = String(text);
+    while (size > 5 && f.widthOfTextAtSize(text, size) > x1 - x0 - 6) size -= 0.25;
+    const tw = f.widthOfTextAtSize(text, size);
+    page.drawText(text, { x: x0 + (x1 - x0 - tw) / 2, y: MB_H - (yTop + yBottom) / 2 - size * 0.35, size, font: f, color });
+  };
+  const para = (text, x0, x1, yTop, yBottom) => {
+    if (!text) return;
+    page.drawText(String(text), { x: x0 + 6, y: MB_H - yTop - 14, size: 8.5, font, maxWidth: x1 - x0 - 12, lineHeight: 10.5 });
+  };
+  cell(mb.date, [35, 166], 150, 174);
+  cell(mb.reg, [167, 297], 150, 174, bold);
+  cell(mb.studentCode, [298, 429], 150, 174);
+  para(mb.weather, 98, 560, 197, 249);
+  para(mb.notams, 98, 560, 249, 300);
+
+  const W = [167, 297], A = [298, 429], M = [429, 560];
+  const n = (v, d) => (v == null || !Number.isFinite(+v) ? '' : (+v).toFixed(d));
+  const rowsY = { empty: [377, 411], pilot: [411, 444], copilot: [444, 478], baggage: [478, 511], fuel: [511, 545], trip: [599, 633] };
+  for (const [k, [t, b]] of Object.entries(rowsY)) {
+    const r = mb.rows[k]; if (!r) continue;
+    cell(n(r[0], 1), W, t, b);
+    if (k === 'empty') cell(n(r[1], 3), A, t, b); // other arms are printed on the form
+    cell(n(r[2], 1), M, t, b);
+  }
+  const red = rgb(0.84, 0, 0.08);
+  for (const [k, t, b] of [['to', 545, 599], ['ldg', 633, 687]]) {
+    const r = mb[k]; if (!r) continue;
+    cell(n(r[0], 1), W, t, b, bold, 11, r[3] ? undefined : red);
+    cell(n(r[1], 3), A, t + 14, b, bold, 11, r[4] ? undefined : red);
+    cell(n(r[2], 1), M, t, b, bold, 11);
+  }
+  return doc.save();
+}

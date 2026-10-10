@@ -1,4 +1,5 @@
 :root {
+[hidden] { display: none !important; }
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, monospace;
   --bg: #f2f2f7;
@@ -230,3 +231,58 @@ table.nl tr.std td.ete { color: var(--tint); }
 .leaflet-tooltip.wpt-tip::before { display: none; }
 .field b { font-weight: 650; font-size: 15px; padding-top: 1px; }
 .wp-sub a { color: var(--tint); text-decoration: none; font-weight: 600; }
+
+/* ---------- Modes, M&B ---------- */
+.modebar { padding: 0 16px 10px; flex: none; }
+.modebar .segmented { min-width: 0; }
+.row.wrap { gap: 6px; flex-wrap: wrap; }
+.field.full { flex: 1 1 100%; }
+table.mbt { min-width: 0; }
+table.mbt td { text-align: right; padding: 8px 10px; }
+table.mbt td.wpt { text-align: left; max-width: none; }
+table.mbt tr.total td { font-weight: 700; }
+table.mbt tr.total.ok td:not(.wpt) { color: var(--ok); }
+table.mbt tr.total.bad td:not(.wpt) { color: var(--bad); }
+.narrow-only { }
+
+/* ---------- Vertical profile ---------- */
+.profile-dock { display: none; }
+.profile-panel { height: 220px; border-radius: var(--r); background: var(--glass); border: 0.5px solid var(--sep); overflow: hidden; }
+.profile-panel canvas, .profile-body canvas { width: 100%; height: 100%; display: block; }
+.note.warn, .profile-info.warn { color: var(--warn); }
+
+/* ---------- Wide layout (iPad landscape / desktop): sidebar + profile dock ---------- */
+@media (min-width: 900px) {
+  :root { --side-w: 410px; --dock-h: 190px; }
+  .profile-collapsed { --dock-h: 44px; }
+  .sheet {
+    left: 12px; right: auto; width: var(--side-w);
+    top: calc(var(--safe-t) + 100px); bottom: calc(var(--dock-h) + 24px + var(--safe-b));
+    height: auto; border-radius: 22px; border: 0.5px solid var(--glass-edge);
+    transform: none !important; touch-action: auto;
+  }
+  .grabber { display: none; }
+  .modebar { padding-top: 14px; }
+  .summary { flex-wrap: wrap; row-gap: 8px; }
+  .summary .btn { flex: 1 0 100%; }
+  .tabs .segmented { min-width: 0; }
+  .narrow-only { display: none; }
+  .profile-dock {
+    display: flex; flex-direction: column; position: fixed; z-index: 950;
+    left: 12px; right: 12px; bottom: calc(12px + var(--safe-b)); height: var(--dock-h);
+    border-radius: 18px; border: 0.5px solid var(--glass-edge); overflow: hidden;
+    transition: height 320ms cubic-bezier(.2,.9,.25,1);
+  }
+  .profile-head { display: flex; align-items: center; gap: 10px; padding: 6px 8px 0 16px; height: 38px; flex: none; }
+  .profile-title { font-weight: 650; font-size: 14px; }
+  .profile-info { font-size: 12px; color: var(--label2); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+  .profile-dock .icon-btn svg { transition: transform 320ms cubic-bezier(.2,.9,.25,1); }
+  .profile-dock.collapsed .icon-btn svg { transform: rotate(180deg); }
+  .profile-body { flex: 1; min-height: 0; padding: 0 6px 6px; }
+  .chip { left: calc(var(--side-w) + 24px + (100vw - var(--side-w) - 24px) / 2); bottom: calc(var(--dock-h) + 36px + var(--safe-b)); }
+  .leaflet-bottom { bottom: calc(var(--dock-h) + 24px); }
+  .leaflet-left { left: calc(var(--side-w) + 12px); }
+}
+@media (max-width: 899px) {
+  .profile-dock { display: none !important; }
+}

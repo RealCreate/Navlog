@@ -1,6 +1,8 @@
 import { AERODROMES, POINTS, FLEET, SOP, adByIcao } from './data.js';
 import { computeNavlog, fuelPolicy, massBalance, fmtMMSS, fmtHMS, fmtVar, fmtAlt, parseAlt, cruiseTas, distanceNm, midpoint } from './nav.js';
-import { buildNavlogPdf } from './pdf.js';
+import { buildNavlogPdf, buildMbPdf } from './pdf.js';
+import { sampleTerrain, plannedProfile, drawProfile } from './profile.js';
+import { PlacesLayer } from './places.js';
 import { sunTimes } from './sun.js';
 
 const L = window.L;
@@ -17,7 +19,9 @@ const defaultState = () => ({
   active: 'main',
   time: null,
   flight: { callsign: '', reg: 'EC-ODX', pilot: '', copilot: '', baggage: 0, fob: AC.fuelCapacity, taxi: '', extra: 0, weather: '' },
-  view: { base: 'vfr', points: true, marks: true },
+  view: { base: 'vfr', points: true, marks: true, names: true, profile: true },
+  mb: { studentCode: '', notams: '', tripSource: 'route', tripManual: '', altManual: '' },
+  mode: 'plan',
 });
 
 let uid = Date.now();
@@ -31,7 +35,7 @@ function adWaypoint(ad) {
 function load() {
   try {
     const s = JSON.parse(localStorage.getItem(STORE));
-    if (s && s.main) return { ...defaultState(), ...s, flight: { ...defaultState().flight, ...s.flight }, view: { ...defaultState().view, ...s.view } };
+    if (s && s.main) { const d = defaultState(); return { ...d, ...s, flight: { ...d.flight, ...s.flight }, view: { ...d.view, ...s.view }, mb: { ...d.mb, ...s.mb } }; }
   } catch { /* first run or storage blocked */ }
   return defaultState();
 }
@@ -116,13 +120,18 @@ function renderTime() {
 /* ---------------- Map ---------------- */
 
 const map = L.map('map', {
-  zoomControl: false, minZoom: 6, maxZoom: 14, worldCopyJump: false,
+  zoomControl: false, attributionControl: false, minZoom: 6, maxZoom: 14, worldCopyJump: false,
   center: [LEBG.lat, LEBG.lon], zoom: 10, tap: false, doubleClickZoom: false,
 });
 L.control.attribution({ position: 'bottomright', prefix: false }).addTo(map);
 
+// On retina screens (iPad) request one zoom level deeper so the chart is drawn
+// at full device resolution instead of being stretched 2x.
+const retina = (window.devicePixelRatio || 1) > 1.5;
 const vfrLayer = L.tileLayer('tiles/{z}/{x}/{y}.webp', {
-  minZoom: 6, maxZoom: 14, maxNativeZoom: 12, minNativeZoom: 6, keepBuffer: 4,
+  minZoom: 6, maxZoom: 14, keepBuffer: 4,
+  maxNativeZoom: retina ? 11 : 12, minNativeZoom: retina ? 5 : 6,
+  tileSize: retina ? 128 : 256, zoomOffset: retina ? 1 : 0,
   attribution: 'Carta VFR 1:500 000 © <a href="https://aip.enaire.es/AIP/CartasInsigniaImpresas-es.html" target="_blank" rel="noopener">ENAIRE · AIP España</a>',
 });
 const topoLayer = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
@@ -151,7 +160,7 @@ function setBase(b) {
   document.querySelector(`input[name=base][value=${b}]`).checked = true;
 }
 
-const panes = ['points', 'routes', 'marks', 'wpts'];
+const panes = ['labels', 'points', 'routes', 'marks', 'wpts'];
 panes.forEach((p, i) => { map.createPane(p).style.zIndex = 410 + i * 10; });
 
 // Reference points (aerodromes + VRPs)
@@ -168,6 +177,18 @@ POINTS.forEach((p) => {
 });
 
 const routeLayer = L.layerGroup().addTo(map);
+
+// Town and village names (OpenStreetMap)
+let placesLayer = null;
+fetch('data/places.json').then((r) => (r.ok ? r.json() : [])).then((places) => {
+  if (!places.length) return;
+  placesLayer = new PlacesLayer(places);
+  togglePlaces();
+}).catch(() => {});
+function togglePlaces() {
+  if (!placesLayer) return;
+  if (state.view.names) placesLayer.addTo(map); else map.removeLayer(placesLayer);
+}
 let selectedId = null;
 
 function nearestRef(latlng) {
@@ -355,7 +376,7 @@ function drawLegAnnotations(key, rows, wps, isAlt) {
 
 function fitRoute() {
   const all = [...state.main.waypoints, ...state.alt.waypoints];
-  if (all.length > 1) map.fitBounds(L.latLngBounds(all.map((w) => [w.lat, w.lon])), { paddingTopLeft: [40, 120], paddingBottomRight: [40, sheetH() + 40], maxZoom: 11 });
+  if (all.length > 1) map.fitBounds(L.latLngBounds(all.map((w) => [w.lat, w.lon])), { paddingBottomRight: [40, isWide() ? 240 : sheetH() + 40], paddingTopLeft: [isWide() ? 440 : 40, 120], maxZoom: 11 });
 }
 
 map.on('zoomend', () => drawRoutes());
@@ -373,7 +394,10 @@ function compute() {
     taxi: +f.taxi || 0, trip: main.totals.trip, alternate: alt.totals.trip, extra: +f.extra || 0,
     fob: +f.fob || 0, localFlight: local, flightMin: main.totals.timeSec / 60,
   });
-  const mb = massBalance({ ac: AC, reg: f.reg, pilot: +f.pilot || 0, copilot: +f.copilot || 0, baggage: +f.baggage || 0, fobL: +f.fob || 0, tripL: main.totals.trip, altL: alt.totals.trip });
+  const useRoute = state.mb.tripSource === 'route' && main.rows.length > 0;
+  const tripL = useRoute ? main.totals.trip : (+state.mb.tripManual || 0);
+  const altL = useRoute ? alt.totals.trip : (+state.mb.altManual || 0);
+  const mb = massBalance({ ac: AC, reg: f.reg, pilot: +f.pilot || 0, copilot: +f.copilot || 0, baggage: +f.baggage || 0, fobL: +f.fob || 0, tripL, altL });
   return { main, alt, fuel, mb };
 }
 
@@ -387,14 +411,36 @@ function endpoint(key, idx) {
 
 const panels = Object.fromEntries([...document.querySelectorAll('[data-panel]')].map((p) => [p.dataset.panel, p]));
 let tab = 'route';
+const wideMQ = matchMedia('(min-width: 900px)');
+const isWide = () => wideMQ.matches;
+
+function showPanels() {
+  const key = state.mode === 'mb' ? 'mb' : tab;
+  Object.entries(panels).forEach(([k, p]) => { p.hidden = k !== key; });
+  document.getElementById('summary').hidden = state.mode === 'mb';
+  document.getElementById('mbSummary').hidden = state.mode !== 'mb';
+  document.getElementById('planTabs').hidden = state.mode === 'mb';
+  document.querySelectorAll('#modes button').forEach((x) => x.classList.toggle('on', x.dataset.mode === state.mode));
+  document.querySelectorAll('#tabs button').forEach((x) => x.classList.toggle('on', x.dataset.tab === tab));
+}
 
 document.getElementById('tabs').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
   tab = b.dataset.tab;
-  document.querySelectorAll('#tabs button').forEach((x) => x.classList.toggle('on', x === b));
-  Object.entries(panels).forEach(([k, p]) => { p.hidden = k !== tab; });
-  if (sheetDetent === 0) setDetent(1);
+  showPanels();
+  if (!isWide() && sheetDetent === 0) setDetent(1);
   renderPanels();
+});
+document.getElementById('modes').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  state.mode = b.dataset.mode;
+  showPanels();
+  if (!isWide() && sheetDetent === 0) setDetent(1);
+  renderPanels(); scheduleSave();
+});
+wideMQ.addEventListener('change', () => {
+  if (isWide() && tab === 'profile') tab = 'route';
+  showPanels(); setDetent(sheetDetent, false); renderPanels(); renderProfile();
 });
 document.getElementById('routeSel').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
@@ -526,8 +572,9 @@ function selectWaypoint(id, scroll) {
   selectedId = id;
   drawRoutes();
   if (scroll) {
+    if (state.mode !== 'plan') { state.mode = 'plan'; showPanels(); }
     if (tab !== 'route') document.querySelector('#tabs [data-tab=route]').click();
-    if (sheetDetent === 0) setDetent(1);
+    if (!isWide() && sheetDetent === 0) setDetent(1);
     const el = panels.route.querySelector(`.wp[data-id="${id}"]`);
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
@@ -639,46 +686,126 @@ panels.fuel.addEventListener('change', (e) => {
   update({ rerenderPanels: true });
 });
 
+function mbTrip() {
+  const useRoute = state.mb.tripSource === 'route' && result.main.rows.length > 0;
+  return {
+    useRoute,
+    trip: useRoute ? result.main.totals.trip : (+state.mb.tripManual || 0),
+    alt: useRoute ? result.alt.totals.trip : (+state.mb.altManual || 0),
+  };
+}
+
 function renderMB() {
-  const f = state.flight;
+  const f = state.flight, mbs = state.mb;
   const m = result.mb;
   const reg = AC.regs[f.reg];
+  const t = mbTrip();
   const row = (l, v, cls = '') => `<div class="row ${cls}"><span class="grow label">${l}</span><span class="value">${v}</span></div>`;
   const cgOk = (cg) => cg >= AC.cg[0] && cg <= AC.cg[1];
+  const kg = (v) => `${v.toFixed(1)} kg`;
   let html = `<div class="group-title"><span>${AC.type} · MTOW ${AC.mtow} kg</span></div>
-  <div class="group"><div class="row" style="gap:6px;flex-wrap:wrap">
+  <div class="group"><div class="row wrap">
     <label class="field"><span>Registration</span><select data-ff="reg">${Object.keys(AC.regs).map((r) => `<option ${r === f.reg ? 'selected' : ''}>${r}</option>`).join('')}</select></label>
+    <label class="field"><span>Student code</span><input data-mb="studentCode" value="${esc(mbs.studentCode)}" placeholder="U24…" autocapitalize="characters"></label>
+  </div><div class="row wrap">
     <label class="field"><span>Pilot (kg)</span><input data-ff="pilot" inputmode="decimal" value="${esc(f.pilot)}" placeholder="real mass"></label>
     <label class="field"><span>Copilot / FI (kg)</span><input data-ff="copilot" inputmode="decimal" value="${esc(f.copilot)}" placeholder="0 if solo"></label>
     <label class="field"><span>Baggage (kg)</span><input data-ff="baggage" inputmode="decimal" value="${esc(f.baggage)}"></label>
-  </div></div>`;
+  </div><div class="row wrap">
+    <label class="field"><span>Fuel on board (L)</span><input data-ff="fob" inputmode="decimal" value="${esc(f.fob)}"></label>
+    <label class="field"><span>Trip fuel (L)</span>${t.useRoute ? `<b>${t.trip.toFixed(1)}</b>` : `<input data-mb="tripManual" inputmode="decimal" value="${esc(mbs.tripManual)}" placeholder="0">`}</label>
+  </div>
+  <div class="toggle-row"><span>Take trip fuel from the planned route${result.main.rows.length ? '' : ' <small class="label">(no route yet)</small>'}</span>
+    <label class="switch"><input type="checkbox" data-mbflag="tripSource" ${mbs.tripSource === 'route' ? 'checked' : ''}><span></span></label></div>
+  </div>`;
   if (m) {
-    html += `<div class="group">
-      ${row('Empty mass', `${reg[0]} kg · ${reg[1]} kg·m`)}
-      ${row(`Fuel on board (${f.fob} L × ${AC.fuelDensity})`, `${(f.fob * AC.fuelDensity).toFixed(1)} kg`)}
-      ${row('Takeoff mass', `${m.tom.toFixed(1)} kg`, m.tom <= AC.mtow ? 'check-ok' : 'check-bad')}
-      ${row(`Takeoff CG (${AC.cg[0]} – ${AC.cg[1]} m)`, `${m.toCg.toFixed(3)} m`, cgOk(m.toCg) ? 'check-ok' : 'check-bad')}
-      ${row('Landing mass (destination)', `${m.lm.toFixed(1)} kg`)}
-      ${row('Landing CG', `${m.ldgCg.toFixed(3)} m`, cgOk(m.ldgCg) ? 'check-ok' : 'check-bad')}
-      ${row('Landing mass (alternate)', `${m.lmAlt.toFixed(1)} kg`)}
+    const fuelKg = f.fob * AC.fuelDensity, tripKg = t.trip * AC.fuelDensity;
+    html += `<div class="group-title"><span>Sheet</span></div>
+    <div class="nl-wrap"><table class="nl mbt"><thead><tr><th></th><th>Mass (kg)</th><th>Arm (m)</th><th>Moment (kg·m)</th></tr></thead><tbody>
+      <tr class="bot"><td class="wpt">Empty mass</td><td>${reg[0].toFixed(1)}</td><td>${(reg[1] / reg[0]).toFixed(3)}</td><td>${reg[1].toFixed(1)}</td></tr>
+      <tr class="bot"><td class="wpt">Pilot</td><td>${(+f.pilot || 0).toFixed(1)}</td><td>${AC.arms.pilot.toFixed(3)}</td><td>${((+f.pilot || 0) * AC.arms.pilot).toFixed(1)}</td></tr>
+      <tr class="bot"><td class="wpt">Copilot</td><td>${(+f.copilot || 0).toFixed(1)}</td><td>${AC.arms.copilot.toFixed(3)}</td><td>${((+f.copilot || 0) * AC.arms.copilot).toFixed(1)}</td></tr>
+      <tr class="bot"><td class="wpt">Baggage</td><td>${(+f.baggage || 0).toFixed(1)}</td><td>${AC.arms.baggage.toFixed(3)}</td><td>${((+f.baggage || 0) * AC.arms.baggage).toFixed(1)}</td></tr>
+      <tr class="bot"><td class="wpt">Fuel on board <small class="label">${f.fob} L</small></td><td>${fuelKg.toFixed(1)}</td><td>${AC.arms.fuel.toFixed(3)}</td><td>${(fuelKg * AC.arms.fuel).toFixed(1)}</td></tr>
+      <tr class="bot total ${m.tom <= AC.mtow && cgOk(m.toCg) ? 'ok' : 'bad'}"><td class="wpt">Takeoff <small class="label">max ${AC.mtow}</small></td><td>${m.tom.toFixed(1)}</td><td>${m.toCg.toFixed(3)}</td><td>${(m.tom * m.toCg).toFixed(1)}</td></tr>
+      <tr class="bot"><td class="wpt">Trip fuel <small class="label">${t.trip.toFixed(1)} L</small></td><td>−${tripKg.toFixed(1)}</td><td>${AC.arms.fuel.toFixed(3)}</td><td>−${(tripKg * AC.arms.fuel).toFixed(1)}</td></tr>
+      <tr class="bot total ${m.lm <= AC.mtow && cgOk(m.ldgCg) ? 'ok' : 'bad'}"><td class="wpt">Landing</td><td>${m.lm.toFixed(1)}</td><td>${m.ldgCg.toFixed(3)}</td><td>${(m.lm * m.ldgCg).toFixed(1)}</td></tr>
+    </tbody></table></div>
+    <div class="group">
+      ${row(`Takeoff mass ≤ ${AC.mtow} kg`, kg(m.tom), m.tom <= AC.mtow ? 'check-ok' : 'check-bad')}
+      ${row(`Takeoff CG ${AC.cg[0]} – ${AC.cg[1]} m`, `${m.toCg.toFixed(3)} m`, cgOk(m.toCg) ? 'check-ok' : 'check-bad')}
+      ${row(`Landing CG ${AC.cg[0]} – ${AC.cg[1]} m`, `${m.ldgCg.toFixed(3)} m`, cgOk(m.ldgCg) ? 'check-ok' : 'check-bad')}
     </div>`;
   }
-  html += `<p class="note">Arms from the FlyBy P2008 JC M&amp;B sheet: pilot/copilot 1.800 m, baggage 2.417 m, fuel 2.209 m. Use the real fuel quantity from FISUP and real masses (SOP). The full M&amp;B sheet will be added to the briefing PDF.</p>`;
+  html += `<div class="group-title"><span>Printed on the sheet</span></div>
+  <div class="group"><div class="row wrap">
+    <label class="field full"><span>Weather</span><input data-ff="weather" value="${esc(f.weather)}" placeholder="METAR / TAF summary"></label>
+    <label class="field full"><span>NOTAMs</span><input data-mb="notams" value="${esc(mbs.notams)}" placeholder="Relevant NOTAMs"></label>
+  </div></div>
+  <button class="btn primary wide" data-act="mbpdf">Download M&amp;B sheet (PDF)</button>
+  <p class="note">Arms from the P2008 JC M&amp;B sheet: pilot/copilot 1.800 m, baggage 2.417 m, fuel 2.209 m, fuel density ${AC.fuelDensity} kg/L. Use the real fuel quantity from FISUP and real masses (SOP). Other aircraft types will be added from their M&amp;B sheets.</p>`;
   panels.mb.innerHTML = html;
 }
 panels.mb.addEventListener('change', (e) => {
-  const k = e.target.dataset.ff; if (!k) return;
-  state.flight[k] = k === 'reg' ? e.target.value : (e.target.value === '' ? '' : Math.max(0, +e.target.value));
+  const t = e.target;
+  if (t.dataset.ff) {
+    const k = t.dataset.ff;
+    state.flight[k] = k === 'reg' || k === 'weather' ? t.value : (t.value === '' ? '' : Math.max(0, +t.value));
+  } else if (t.dataset.mb) {
+    state.mb[t.dataset.mb] = t.dataset.mb === 'studentCode' ? t.value.toUpperCase().trim() : t.value;
+  } else if (t.dataset.mbflag) {
+    state.mb.tripSource = t.checked ? 'route' : 'manual';
+  } else return;
   update({ rerenderPanels: true });
 });
+panels.mb.addEventListener('click', (e) => { if (e.target.closest('[data-act=mbpdf]')) downloadMbPdf(); });
+
+async function downloadMbPdf() {
+  const m = result.mb, f = state.flight;
+  if (!m) return toast('Choose a registration first.');
+  const reg = AC.regs[f.reg];
+  const t = mbTrip();
+  const fuelKg = f.fob * AC.fuelDensity, tripKg = t.trip * AC.fuelDensity;
+  const cgOk = (cg) => cg >= AC.cg[0] && cg <= AC.cg[1];
+  try {
+    const bytes = await buildMbPdf({
+      date: flightTime().toLocaleDateString('en-GB'), reg: f.reg, studentCode: state.mb.studentCode,
+      weather: f.weather, notams: state.mb.notams,
+      rows: {
+        empty: [reg[0], reg[1] / reg[0], reg[1]],
+        pilot: [+f.pilot || 0, AC.arms.pilot, (+f.pilot || 0) * AC.arms.pilot],
+        copilot: [+f.copilot || 0, AC.arms.copilot, (+f.copilot || 0) * AC.arms.copilot],
+        baggage: [+f.baggage || 0, AC.arms.baggage, (+f.baggage || 0) * AC.arms.baggage],
+        fuel: [fuelKg, AC.arms.fuel, fuelKg * AC.arms.fuel],
+        trip: [tripKg, AC.arms.fuel, tripKg * AC.arms.fuel],
+      },
+      to: [m.tom, m.toCg, m.tom * m.toCg, m.tom <= AC.mtow, cgOk(m.toCg)],
+      ldg: [m.lm, m.ldgCg, m.lm * m.ldgCg, m.lm <= AC.mtow, cgOk(m.ldgCg)],
+    });
+    saveBlob(bytes, `MB_${f.reg}_${flightTime().toISOString().slice(0, 10)}.pdf`);
+    toast('M&B sheet ready');
+  } catch (err) { console.error(err); toast('Could not build the PDF: ' + err.message); }
+}
+
+function renderMbSummary() {
+  const m = result.mb;
+  const set = (id, v, ok) => { const el = document.getElementById(id); el.textContent = v; el.className = 'v ' + (ok == null ? '' : ok ? 'ok' : 'bad'); };
+  if (!m) return;
+  const cgOk = (cg) => cg >= AC.cg[0] && cg <= AC.cg[1];
+  set('mTom', `${m.tom.toFixed(1)} kg`, m.tom <= AC.mtow);
+  set('mCg', `${m.toCg.toFixed(3)} m`, cgOk(m.toCg));
+  set('mLm', `${m.lm.toFixed(1)} kg`, cgOk(m.ldgCg));
+}
+document.getElementById('btnMbPdf').addEventListener('click', downloadMbPdf);
 
 function renderPanels() {
   document.querySelectorAll('#routeSel button').forEach((b) => b.classList.toggle('on', b.dataset.route === state.active));
-  document.getElementById('routeSel').hidden = tab === 'fuel' || tab === 'mb';
+  document.getElementById('routeSel').hidden = tab === 'fuel';
+  if (state.mode === 'mb') return renderMB();
   if (tab === 'route') renderRoute();
   if (tab === 'navlog') renderNavlog();
   if (tab === 'fuel') renderFuel();
-  if (tab === 'mb') renderMB();
+  if (tab === 'profile') renderProfile();
 }
 
 function renderSummary() {
@@ -696,6 +823,64 @@ function renderSummary() {
   document.getElementById('brandSub').textContent = [dep?.icao, dest?.icao].filter(Boolean).join(' → ') || 'LEBG';
 }
 
+/* ---------------- Vertical profile ---------------- */
+
+const dock = document.getElementById('profileDock');
+let terrainKey = null, terrainData = null, terrainErr = false, terrainTimer = null;
+
+function legDistances(key) {
+  const rows = result[key].rows, n = state[key].waypoints.length;
+  return Array.from({ length: Math.max(0, n - 1) }, (_, i) => rows.filter((r) => r.legIndex === i + 1).reduce((t, r) => t + r.dist, 0));
+}
+function scheduleTerrain() { clearTimeout(terrainTimer); terrainTimer = setTimeout(loadTerrain, 350); renderProfile(); }
+async function loadTerrain() {
+  const key = state.active, wps = state[key].waypoints;
+  if (wps.length < 2) { terrainKey = null; terrainData = null; return renderProfile(); }
+  const k = key + wps.map((w) => `${w.lat.toFixed(4)},${w.lon.toFixed(4)}`).join(';');
+  if (k === terrainKey) return;
+  terrainKey = k; terrainData = null; terrainErr = false; renderProfile();
+  try {
+    const t = await sampleTerrain(wps, legDistances(key));
+    if (terrainKey === k) { terrainData = t; renderProfile(); }
+  } catch (err) {
+    console.warn('terrain', err);
+    if (terrainKey === k) { terrainErr = true; terrainKey = null; renderProfile(); }
+  }
+}
+function renderProfile() {
+  if (!result) return;
+  const key = state.active;
+  const nl = result[key];
+  const startAd = endpoint(key, 0), endAd = endpoint(key, -1);
+  const planned = nl.rows.length ? plannedProfile(nl.rows, startAd ? (key === 'alt' ? null : startAd.elev) : null, endAd && state[key].stdArr ? endAd.elev : null) : null;
+  const color = key === 'alt' ? '#0a84ff' : '#d1009a';
+  const targets = isWide()
+    ? [[document.getElementById('profileCanvas'), document.getElementById('profileInfo')]]
+    : (state.mode === 'plan' && tab === 'profile' ? [[document.getElementById('profileCanvasSheet'), document.getElementById('profileNoteSheet')]] : []);
+  for (const [canvas, info] of targets) {
+    const res = drawProfile(canvas, { planned, terrain: terrainData, color });
+    let txt = '';
+    if (planned) {
+      if (terrainErr) txt = 'Terrain unavailable (offline?)';
+      else if (!terrainData) txt = 'Loading terrain…';
+      else if (res) {
+        txt = `Highest terrain ±2 NM: ${res.maxTerrain} ft`;
+        if (res.minClearance != null) txt += ` · min clearance ${res.minClearance} ft${res.minClearance < 1000 ? ' ⚠︎ below 1000 ft' : ''}`;
+      }
+      txt += ' · obstacles not included — check the chart';
+    }
+    info.textContent = txt;
+    info.classList.toggle('warn', !!(res && res.minClearance != null && res.minClearance < 1000));
+  }
+}
+document.getElementById('profileToggle').addEventListener('click', () => {
+  state.view.profile = !state.view.profile;
+  dock.classList.toggle('collapsed', !state.view.profile);
+  document.documentElement.classList.toggle('profile-collapsed', !state.view.profile);
+  save(); setTimeout(renderProfile, 300);
+});
+new ResizeObserver(() => renderProfile()).observe(dock);
+
 /* ---------------- Update loop ---------------- */
 
 let saveTimer = null;
@@ -705,12 +890,23 @@ function update(opts = {}) {
   result = compute();
   drawRoutes();
   renderSummary();
+  renderMbSummary();
+  scheduleTerrain();
   renderTime();
   if (opts.rerenderPanels !== false) renderPanels();
   scheduleSave();
 }
 
 /* ---------------- PDF ---------------- */
+
+function saveBlob(bytes, name) {
+  const blob = new Blob([bytes], { type: 'application/pdf' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60e3);
+}
 
 async function downloadPdf() {
   if (result.main.rows.length === 0) return toast('Add at least two waypoints first.');
@@ -719,14 +915,9 @@ async function downloadPdf() {
     const sheets = [{ header: headerFor('main'), rows: result.main.rows }];
     if (result.alt.rows.length) sheets.push({ header: headerFor('alt'), rows: result.alt.rows });
     const bytes = await buildNavlogPdf(sheets);
-    const blob = new Blob([bytes], { type: 'application/pdf' });
     const h = sheets[0].header;
     const name = `Navlog_${h.dep}-${h.dest}_${flightTime().toISOString().slice(0, 10)}.pdf`;
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = name;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 60e3);
+    saveBlob(bytes, name);
     toast('Navlog PDF ready');
   } catch (err) {
     console.error(err);
@@ -743,6 +934,7 @@ const detents = () => [150, Math.round(window.innerHeight * 0.48), Math.round(wi
 function sheetH() { return detents()[sheetDetent]; }
 function setDetent(i, animate = true) {
   sheetDetent = Math.max(0, Math.min(2, i));
+  if (isWide()) { document.documentElement.style.removeProperty('--sheet-h'); return; }
   sheet.classList.toggle('anim', animate);
   document.documentElement.style.setProperty('--sheet-h', `${sheetH()}px`);
   sheet.style.transform = '';
@@ -751,7 +943,7 @@ function setDetent(i, animate = true) {
   const handles = [document.getElementById('grabber'), document.getElementById('summary')];
   let startY = 0, startH = 0, hist = [], dragging = false, moved = false;
   handles.forEach((hd) => hd.addEventListener('pointerdown', (e) => {
-    if (e.target.closest('button')) return;
+    if (e.target.closest('button') || isWide()) return;
     dragging = true; moved = false; startY = e.clientY; startH = sheetH(); hist = [[e.clientY, e.timeStamp]];
     hd.setPointerCapture(e.pointerId);
     sheet.classList.remove('anim');
@@ -804,6 +996,9 @@ const chkPoints = document.getElementById('chkPoints');
 chkPoints.checked = state.view.points;
 chkPoints.addEventListener('change', () => { state.view.points = chkPoints.checked; togglePoints(); save(); });
 function togglePoints() { if (state.view.points) pointsLayer.addTo(map); else map.removeLayer(pointsLayer); }
+const chkNames = document.getElementById('chkNames');
+chkNames.checked = state.view.names;
+chkNames.addEventListener('change', () => { state.view.names = chkNames.checked; togglePlaces(); save(); });
 const chkMarks = document.getElementById('chkMarks');
 chkMarks.checked = state.view.marks;
 chkMarks.addEventListener('change', () => { state.view.marks = chkMarks.checked; drawRoutes(); save(); });
@@ -845,6 +1040,9 @@ document.getElementById('btnOffline').addEventListener('click', async () => {
 /* ---------------- Boot ---------------- */
 
 syncSlider();
+showPanels();
+dock.classList.toggle('collapsed', !state.view.profile);
+document.documentElement.classList.toggle('profile-collapsed', !state.view.profile);
 setDetent(1, false);
 togglePoints();
 initBase();

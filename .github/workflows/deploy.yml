@@ -69,10 +69,27 @@ jobs:
           path: chart-previews/
           if-no-files-found: ignore
 
+      - name: Month key for place names
+        id: month
+        run: echo "m=$(date +%Y-%m)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore place names
+        id: places
+        uses: actions/cache@v4
+        with:
+          path: data
+          key: places-${{ steps.month.outputs.m }}-${{ hashFiles('tools/build-places.py') }}
+
+      - name: Build place names (OpenStreetMap)
+        if: steps.places.outputs.cache-hit != 'true'
+        continue-on-error: true
+        run: mkdir -p data-tmp && python3 tools/build-places.py data-tmp/places.json && mkdir -p data && mv data-tmp/places.json data/
+
       - name: Assemble site
         run: |
-          mkdir -p _site
+          mkdir -p _site/data
           cp -r index.html styles.css manifest.webmanifest sw.js js vendor assets icons _site/
+          if [ -f data/places.json ]; then cp data/places.json _site/data/; else echo '[]' > _site/data/places.json; fi
           cp -r tiles _site/tiles
           touch _site/.nojekyll
           du -sh _site
