@@ -1,0 +1,93 @@
+name: Build and deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    # Check weekly for a new edition of the ENAIRE VFR charts
+    - cron: '17 4 * * 1'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Test navlog calculations
+        run: npm test
+
+      - name: Find current VFR chart editions (AIP España)
+        id: charts
+        run: |
+          curl -fsSL --retry 3 https://aip.enaire.es/AIP/CartasInsigniaImpresas-es.html -o page.html
+          urls=""
+          # LE1 Norte covers Burgos; LE4 Centronorte covers the area to the south.
+          for sheet in LE4_CENTRONORTE LE1_NORTE; do
+            path=$(grep -oiE "recursos/descargas/VFR500/[0-9]{4}_${sheet}\.zip" page.html | head -1)
+            if [ -z "$path" ]; then echo "Sheet $sheet not found on the AIP page" >&2; exit 1; fi
+            urls="$urls https://aip.enaire.es/$path"
+          done
+          echo "urls=$urls" >> "$GITHUB_OUTPUT"
+          echo "key=tiles-$(echo "$urls" | sha1sum | cut -c1-12)-$(sha1sum tools/build-tiles.sh | cut -c1-8)" >> "$GITHUB_OUTPUT"
+          echo "Charts:$urls"
+
+      - name: Restore chart tiles
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: tiles
+          key: ${{ steps.charts.outputs.key }}
+
+      - name: Install GDAL
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq gdal-bin python3-gdal
+
+      - name: Build chart tiles
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: bash tools/build-tiles.sh tiles ${{ steps.charts.outputs.urls }}
+
+      - name: Upload chart previews
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: chart-previews
+          path: chart-previews/
+          if-no-files-found: ignore
+
+      - name: Assemble site
+        run: |
+          mkdir -p _site
+          cp -r index.html styles.css manifest.webmanifest sw.js js vendor assets icons _site/
+          cp -r tiles _site/tiles
+          touch _site/.nojekyll
+          du -sh _site
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
