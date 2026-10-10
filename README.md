@@ -3,7 +3,7 @@
 Personal VFR navigation-log planner, built to follow the flight school's SOPs
 (Phase 2 Training Manual — Flight Planning Manual) to the letter.
 
-Live: https://realcreate.github.io/navlog/ (installable on iPad: Share → Add to Home Screen)
+Live: https://realcreate.github.io/Navlog/ (installable on iPad: Share → Add to Home Screen)
 
 ## What it does
 
