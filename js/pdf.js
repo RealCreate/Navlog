@@ -138,13 +138,10 @@ export async function buildNavlogPdf(sheets) {
           drawName(page, bold, r.from, side.wp, top, (top + BLOCK_TOPS[1]) / 2);
         }
         drawRow(page, font, bold, side, b, r);
-        // destination name sits on the block boundary, spanning half of each block
+        // destination name in the lower half of the block, level with the arrow's lower edge (as in the Excel)
         const top = BLOCK_TOPS[b];
         const bottom = b + 1 < PER_SIDE ? BLOCK_TOPS[b + 1] : BLOCK_BOTTOM;
-        const mid = (top + bottom) / 2;
-        const nextBottom = b + 2 < PER_SIDE ? BLOCK_TOPS[b + 2] : BLOCK_BOTTOM;
-        const nextMid = b + 1 < PER_SIDE ? (bottom + nextBottom) / 2 : BLOCK_BOTTOM;
-        drawName(page, bold, r.to, side.wp, mid, nextMid);
+        drawName(page, bold, r.to, side.wp, (top + bottom) / 2, bottom);
       });
     }
   }

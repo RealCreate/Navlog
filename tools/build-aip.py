@@ -89,11 +89,21 @@ for f in query(50, "TYPE_CODE='VFR'"):
     lat, lon = g["y"], g["x"]
     if not in_range(lat, lon):
         continue
-    near = min(ads, key=lambda d: nm((lat, lon), (d["lat"], d["lon"]))) if ads else None
-    dist = nm((lat, lon), (near["lat"], near["lon"])) if near else 999
+    # Reporting points belong to aerodromes with a VAC: prefer the nearest public aerodrome,
+    # otherwise the nearest aerodrome (not heliport) close by.
+    def nearest(cands):
+        return min(cands, key=lambda d: nm((lat, lon), (d["lat"], d["lon"]))) if cands else None
+    pub = nearest([d for d in ads if d["type"] == "AD" and d["class"] == "PÚBLICO"])
+    near, dist = None, 999
+    if pub and nm((lat, lon), (pub["lat"], pub["lon"])) <= 25:
+        near, dist = pub, nm((lat, lon), (pub["lat"], pub["lon"]))
+    else:
+        anyad = nearest([d for d in ads if d["type"] == "AD"])
+        if anyad and nm((lat, lon), (anyad["lat"], anyad["lon"])) <= 15:
+            near, dist = anyad, nm((lat, lon), (anyad["lat"], anyad["lon"]))
     vrps.append({
         "id": (a.get("IDENT_TXT") or "").strip(), "name": (a.get("NAME_TXT") or "").strip(),
-        "lat": round(lat, 6), "lon": round(lon, 6), "ad": near["icao"] if near and dist <= 30 else None,
+        "lat": round(lat, 6), "lon": round(lon, 6), "ad": near["icao"] if near else None,
         "rmk": (a.get("REMARKS_EN_TXT") or a.get("REMARKS_ES_TXT") or None),
     })
 print(f"{len(vrps)} VFR points", file=sys.stderr)

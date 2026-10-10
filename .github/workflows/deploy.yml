@@ -85,11 +85,28 @@ jobs:
         continue-on-error: true
         run: mkdir -p data-tmp && python3 tools/build-places.py data-tmp/places.json && mkdir -p data && mv data-tmp/places.json data/
 
+      - name: Week key for AIP data
+        id: week
+        run: echo "w=$(date +%G-%V)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore AIP data
+        id: aip
+        uses: actions/cache@v4
+        with:
+          path: aipdata
+          key: aip-${{ steps.week.outputs.w }}-${{ hashFiles('tools/build-aip.py') }}
+
+      - name: Build AIP data (ENAIRE aerodromes, VRPs, VFR routes)
+        if: steps.aip.outputs.cache-hit != 'true'
+        continue-on-error: true
+        run: mkdir -p aip-tmp && python3 tools/build-aip.py aip-tmp/aip.json && mkdir -p aipdata && mv aip-tmp/aip.json aipdata/
+
       - name: Assemble site
         run: |
           mkdir -p _site/data
           cp -r index.html styles.css manifest.webmanifest sw.js js vendor assets icons _site/
           if [ -f data/places.json ]; then cp data/places.json _site/data/; else echo '[]' > _site/data/places.json; fi
+          if [ -f aipdata/aip.json ]; then cp aipdata/aip.json _site/data/; else echo '{}' > _site/data/aip.json; fi
           cp -r tiles _site/tiles
           touch _site/.nojekyll
           du -sh _site

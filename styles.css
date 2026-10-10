@@ -286,3 +286,6 @@ table.mbt tr.total.bad td:not(.wpt) { color: var(--bad); }
 @media (max-width: 899px) {
   .profile-dock { display: none !important; }
 }
+.leg-out .tag { background: var(--fill2); color: var(--label); border-radius: 6px; padding: 1px 6px; font-weight: 600; }
+.leg-out .hint { color: var(--warn); flex-basis: 100%; }
+.pt-ad.minor { width: 10px; height: 10px; border-width: 2px; border-color: #5a6f9a; }

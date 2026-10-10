@@ -1,4 +1,4 @@
-import { AERODROMES, POINTS, FLEET, SOP, adByIcao } from './data.js';
+import { AERODROMES, POINTS, FLEET, SOP, adByIcao, mergeAip, procedureFor, PROCEDURES } from './data.js';
 import { computeNavlog, fuelPolicy, massBalance, fmtMMSS, fmtHMS, fmtVar, fmtAlt, parseAlt, cruiseTas, distanceNm, midpoint } from './nav.js';
 import { buildNavlogPdf, buildMbPdf } from './pdf.js';
 import { sampleTerrain, plannedProfile, drawProfile } from './profile.js';
@@ -165,16 +165,32 @@ panes.forEach((p, i) => { map.createPane(p).style.zIndex = 410 + i * 10; });
 
 // Reference points (aerodromes + VRPs)
 const pointsLayer = L.layerGroup();
-POINTS.forEach((p) => {
-  const icon = L.divIcon({
-    className: '', iconSize: [14, 14], iconAnchor: [7, 7],
-    html: `<div class="${p.type === 'ad' ? 'pt-ad' : 'pt-vrp'}"></div><span class="pt-label">${p.type === 'ad' ? p.label : p.label.split(' ')[0]}</span>`,
+function buildPoints() {
+  pointsLayer.clearLayers();
+  const z = map.getZoom();
+  POINTS.forEach((p) => {
+    if (p.type === 'vrp' && z < 9) return;
+    const ad = adByIcao(p.ad);
+    const minor = p.type === 'ad' && ad && ad.public === false;
+    if (minor && z < 9) return;
+    const icon = L.divIcon({
+      className: '', iconSize: [14, 14], iconAnchor: [7, 7],
+      html: `<div class="${p.type === 'ad' ? (minor ? 'pt-ad minor' : 'pt-ad') : 'pt-vrp'}"></div><span class="pt-label">${p.type === 'ad' ? p.label : p.label.split(' ')[0]}</span>`,
+    });
+    const m = L.marker([p.lat, p.lon], { icon, pane: 'points', keyboard: false });
+    // SkyDemon-style: tapping a reporting point or aerodrome adds it to the route.
+    m.on('click', (e) => { L.DomEvent.stopPropagation(e); addPoint(p); });
+    pointsLayer.addLayer(m);
   });
-  const m = L.marker([p.lat, p.lon], { icon, pane: 'points', keyboard: false });
-  // SkyDemon-style: tapping a reporting point or aerodrome adds it to the route.
-  m.on('click', (e) => { L.DomEvent.stopPropagation(e); addPoint(p); toast(`Added ${refName(p)} · ${p.sub}`); });
-  pointsLayer.addLayer(m);
-});
+}
+buildPoints();
+let lastZ = map.getZoom();
+map.on('zoomend', () => { const z = map.getZoom(); if ((z >= 9) !== (lastZ >= 9)) buildPoints(); lastZ = z; });
+
+// Every aerodrome, VRP and VFR route within 200 NM of LEBG / LERJ (AIP, built weekly in CI)
+fetch('data/aip.json').then((r) => (r.ok ? r.json() : null)).then((aip) => {
+  if (mergeAip(aip)) { buildPoints(); update({ rerenderPanels: true }); }
+}).catch(() => {});
 
 const routeLayer = L.layerGroup().addTo(map);
 
@@ -211,6 +227,11 @@ function defaultVar(lat, lon) {
   return best.var;
 }
 
+function lastCruiseAlt(wps) {
+  for (let i = wps.length - 1; i > 0; i--) if (!wps[i].proc && wps[i].alt) return wps[i].alt;
+  return 5500;
+}
+
 function newWaypoint(lat, lon, ref) {
   const r = route();
   const prev = r.waypoints[r.waypoints.length - 1];
@@ -218,18 +239,70 @@ function newWaypoint(lat, lon, ref) {
     id: ++uid, lat, lon,
     name: ref ? refName(ref) : `WPT ${r.waypoints.length}`,
     ref: ref ? ref.key : null,
-    alt: prev && prev.alt ? prev.alt : 5500,
+    alt: lastCruiseAlt(r.waypoints),
     wdir: prev ? prev.wdir || '' : '', wspd: prev ? prev.wspd || '' : '',
     var: ref ? adByIcao(ref.ad).var : defaultVar(lat, lon),
   };
   return wp;
 }
 
+const vrpRef = (adIcao, id) => POINTS.find((p) => p.key === `${adIcao}-${id}`);
+
 function addPoint(ref) {
   const r = route();
   if (!r.waypoints.length && state.active === 'alt') seedAlternate();
+  const wps = r.waypoints;
+  const first = wps[0], last = wps[wps.length - 1];
+  const firstAd = first && first.ref && adByIcao(first.ref);
+  const isStart = wps.length === 1;
+
+  // Leaving the departure aerodrome via one of its reporting points: follow the published route.
+  if (isStart && firstAd && ref.type === 'vrp' && ref.ad === firstAd.icao) {
+    const proc = procedureFor(firstAd.icao, ref.id, 'dep');
+    if (proc) {
+      for (const id of proc.points) {
+        const p = vrpRef(firstAd.icao, id); if (!p) continue;
+        const wp = newWaypoint(p.lat, p.lon, p);
+        wp.proc = 'dep'; if (proc.alt) wp.alt = proc.alt;
+        wps.push(wp);
+      }
+      toast(`Departure ${proc.points.join(' → ')}${proc.alt ? ` at ${proc.alt} ft` : ''} · ${proc.source}`);
+      haptic(); return update({ rerenderPanels: true });
+    }
+  }
+  if (isStart && firstAd && ref.type !== 'vrp' && state.active === 'main') {
+    toast(`Tip: leave ${firstAd.icao} via one of its reporting points (VAC)`);
+  }
+
+  // Joining an aerodrome: from its reporting point, follow the published route in.
+  if (ref.type === 'ad' && wps.length >= 1) {
+    const ad = adByIcao(ref.ad);
+    const lastRef = last && last.ref && POINTS.find((p) => p.key === last.ref);
+    if (lastRef && lastRef.type === 'vrp' && lastRef.ad === ad.icao) {
+      const proc = procedureFor(ad.icao, lastRef.id, 'arr');
+      if (proc) {
+        if (proc.alt) last.alt = proc.alt; // established at the procedure altitude over the entry point
+        for (const id of proc.points.slice(1)) {
+          const p = vrpRef(ad.icao, id); if (!p) continue;
+          const wp = newWaypoint(p.lat, p.lon, p);
+          wp.proc = 'arr'; if (proc.alt) wp.alt = proc.alt;
+          wps.push(wp);
+        }
+        const wp = newWaypoint(ref.lat, ref.lon, ref);
+        wp.proc = 'arr'; if (proc.alt) wp.alt = proc.alt;
+        wps.push(wp);
+        const solo = state.flight.solo && proc.solo && !proc.solo.includes(lastRef.id);
+        toast(solo ? `Solo flights may only enter via ${proc.solo.join(' or ')} (SOP)` : `Arrival ${proc.points.join(' → ')} → ${ad.icao}${proc.alt ? ` at ${proc.alt} ft` : ''} · ${proc.source}`);
+        haptic(); return update({ rerenderPanels: true });
+      }
+    } else if (wps.length > 1 && ad.vrps.length) {
+      toast(`Tip: join ${ad.icao} via a reporting point (${ad.vrps.slice(0, 5).map((v) => v.id).join(', ')})`);
+    }
+  }
+
   const wp = newWaypoint(ref.lat, ref.lon, ref);
-  r.waypoints.push(wp);
+  wps.push(wp);
+  if (ref.type !== 'ad') toast(`Added ${refName(ref)} · ${ref.sub}`);
   haptic();
   update({ rerenderPanels: true });
 }
@@ -321,7 +394,7 @@ function drawRoutes() {
         // Tapping the departure aerodrome again closes the route (return to base).
         if (i === 0 && wps.length > 1 && w.ref && adByIcao(w.ref) && wps[wps.length - 1].ref !== w.ref) {
           const ref = POINTS.find((p) => p.key === w.ref);
-          addPoint(ref); toast(`Return to ${w.ref} added`);
+          addPoint(ref);
           return;
         }
         selectWaypoint(w.id, true);
@@ -463,6 +536,30 @@ function windyLevel(ft) {
   return `${best[0]}h`;
 }
 
+function soloEntryIssue() {
+  if (!state.flight.solo) return null;
+  const wps = state.main.waypoints;
+  for (let i = 1; i < wps.length; i++) {
+    const p = wps[i].ref && POINTS.find((x) => x.key === wps[i].ref);
+    const next = wps[i + 1];
+    if (!p || p.type !== 'vrp' || !next || next.proc !== 'arr' && !(next.ref === p.ad)) continue;
+    const proc = PROCEDURES[p.ad];
+    if (proc && proc.soloEntry && !proc.soloEntry.includes(p.id)) return `Solo flights must enter the ${p.ad} FIZ via ${proc.soloEntry.join(' or ')} only (SOP 2513) — you are joining via ${p.id}.`;
+  }
+  return null;
+}
+
+// SERA.5005: above 3000 ft AGL, magnetic track 000–179° → odd thousands + 500 ft, 180–359° → even + 500 ft.
+function semicircularHint(mc, alt) {
+  if (alt == null || alt < 3000) return null;
+  const odd = mc < 180;
+  const ok = alt % 1000 === 500 && (Math.floor(alt / 1000) % 2 === 1) === odd;
+  if (ok) return null;
+  const base = Math.floor(alt / 1000);
+  const cands = [base - 1, base, base + 1].filter((t) => (t % 2 === 1) === odd && t >= 2).map((t) => t * 1000 + 500);
+  return `Cruising level for MC ${String(mc).padStart(3, '0')}°: ${cands.slice(0, 2).join(' / ')} ft (SERA, above 3000 ft AGL)`;
+}
+
 function renderRoute() {
   const key = state.active;
   const r = route();
@@ -477,7 +574,11 @@ function renderRoute() {
       <label class="switch"><input type="checkbox" data-flag="stdDep" ${r.stdDep ? 'checked' : ''}><span></span></label></div>
     <div class="toggle-row"><span>Standard arrival — ${SOP.stdArrMin} min <small class="label">(last leg)</small></span>
       <label class="switch"><input type="checkbox" data-flag="stdArr" ${r.stdArr ? 'checked' : ''}><span></span></label></div>
+    <div class="toggle-row"><span>Solo flight <small class="label">(LEBG entry only via N or W)</small></span>
+      <label class="switch"><input type="checkbox" data-solo ${state.flight.solo ? 'checked' : ''}><span></span></label></div>
   </div>`;
+  const soloIssue = soloEntryIssue();
+  if (soloIssue) html = `<div class="warnings">${esc(soloIssue)}</div>` + html;
 
   html += `<div class="group-title"><span>${isAlt ? 'Alternate route' : 'Route'} · ${wps.length} point${wps.length === 1 ? '' : 's'}</span>
     <span><button class="btn small" data-act="windall">Wind for all legs</button> <button class="btn small" data-act="reverse">Reverse</button> <button class="btn small danger" data-act="clear">Clear</button></span></div>`;
@@ -516,7 +617,8 @@ function renderRoute() {
           const fuel = Math.round(legRows.reduce((t, x) => t + x.fuel, 0) * 10) / 10;
           const last = legRows[legRows.length - 1];
           const dist = legRows.reduce((t, x) => t + x.dist, 0);
-          html += `<div class="leg-out"><span>TC <b>${last.tc}°</b></span><span>MH <b>${last.mh}°</b></span><span>Dist <b>${dist} NM</b></span><span>GS <b>${last.gs} kt</b></span><span>ETE <b>${fmtMMSS(ete)}</b></span><span>Fuel <b>${fuel} L</b></span>${legRows.length > 1 ? `<span>incl. <b>${legRows[0].to}</b></span>` : ''}</div>`;
+          const sera = !w.proc && !(i === 1 && r.stdDep) && !(i === wps.length - 1 && r.stdArr) ? semicircularHint(last.mc, parseAlt(w.alt)) : null;
+          html += `<div class="leg-out">${w.proc ? `<span class="tag">${w.proc === 'dep' ? 'Departure route' : 'Arrival route'} · VAC</span>` : ''}<span>TC <b>${last.tc}°</b></span><span>MH <b>${last.mh}°</b></span><span>Dist <b>${dist} NM</b></span><span>GS <b>${last.gs} kt</b></span><span>ETE <b>${fmtMMSS(ete)}</b></span><span>Fuel <b>${fuel} L</b></span>${legRows.length > 1 ? `<span>incl. <b>${legRows.find((x) => x.auto)?.to || ''}</b></span>` : ''}${sera ? `<span class="hint">${sera}</span>` : ''}</div>`;
         }
       }
       html += '</div>';
@@ -530,6 +632,7 @@ function renderRoute() {
 panels.route.addEventListener('change', (e) => {
   const t = e.target;
   if (t.dataset.flag) { route()[t.dataset.flag] = t.checked; return update({ rerenderPanels: true }); }
+  if (t.hasAttribute('data-solo')) { state.flight.solo = t.checked; return update({ rerenderPanels: true }); }
   const row = t.closest('.wp'); if (!row || !t.dataset.f) return;
   const w = route().waypoints.find((x) => x.id === +row.dataset.id); if (!w) return;
   const f = t.dataset.f;

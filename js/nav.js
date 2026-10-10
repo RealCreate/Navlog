@@ -114,15 +114,30 @@ export function computeNavlog(plan, s = SOP) {
     legs.push({ i, a, b, tc, dist });
   }
 
-  let prevAlt = parseAlt(wps[1].alt);
+  // Standard times (SOP): the initial legs up to the departure reporting point take 20 min,
+  // the legs from the arrival reporting point to the aerodrome take 15 min. Published
+  // procedure legs (VAC corridors) are marked proc: 'dep' / 'arr' on their waypoints.
+  let depCount = 0, arrCount = 0;
+  if (plan.stdDep) {
+    while (depCount < legs.length && wps[depCount + 1].proc === 'dep') depCount++;
+    depCount = Math.max(1, depCount);
+  }
+  if (plan.stdArr) {
+    arrCount = 1;
+    while (arrCount < legs.length && wps[wps.length - 1 - arrCount].proc === 'arr') arrCount++;
+  }
+  if (depCount + arrCount > legs.length) depCount = Math.max(0, legs.length - arrCount);
+  const groupDist = (from, n) => legs.slice(from, from + n).reduce((t, l) => t + l.dist, 0) || 1;
+  const depDist = groupDist(0, depCount), arrDist = groupDist(legs.length - arrCount, arrCount);
+
+  let prevAlt = parseAlt(wps[1].alt), prevLabel = wps[1].alt;
   legs.forEach((leg, idx) => {
     const b = leg.b;
     const alt = parseAlt(b.alt);
     const altLabel = b.alt;
     const vr = b.var != null && b.var !== '' ? +b.var : 0;
     const wdir = +b.wdir || 0, wspd = +b.wspd || 0;
-    const isFirst = idx === 0, isLast = idx === legs.length - 1;
-    const std = (isFirst && plan.stdDep) ? 'dep' : (isLast && plan.stdArr) ? 'arr' : null;
+    const std = idx < depCount ? 'dep' : idx >= legs.length - arrCount ? 'arr' : null;
     const tcRounded = hdg(leg.tc);
     const base = {
       to: b.name, from: leg.a.name, tc: tcRounded, var: vr, mc: hdg(tcRounded - vr),
@@ -134,22 +149,21 @@ export function computeNavlog(plan, s = SOP) {
       const wt = windTriangle(tcRounded, tas, wdir, wspd);
       if (wt.error) warnings.push(`${base.from} → ${extra.to}: ${wt.error}`);
       const row = { ...base, ...extra, wca: wt.wca, mh: hdg(base.mc + wt.wca), gs: wt.gs };
-      if (row.fixedMin != null) {
-        row.eteSec = row.fixedMin * 60;
-      } else {
-        row.eteSec = row.gs > 0 ? (row.dist / row.gs) * 3600 : 0;
-      }
+      if (row.fixedSec != null) row.eteSec = row.fixedSec;
+      else row.eteSec = row.gs > 0 ? (row.dist / row.gs) * 3600 : 0;
       row.fuel = r1((row.eteSec / 3600) * row.ff);
       return row;
     };
 
     if (std) {
       const tas = b.tas ? +b.tas : s.tasBase;
+      const totalMin = std === 'dep' ? s.stdDepMin : s.stdArrMin;
+      const share = leg.dist / (std === 'dep' ? depDist : arrDist);
       rows.push(segRow({
-        to: b.name, tas, dist: leg.dist, phase: std,
-        fixedMin: std === 'dep' ? s.stdDepMin : s.stdArrMin, ff: s.ffCruise,
+        to: b.name, tas, dist: leg.dist, phase: std, fixedMin: totalMin,
+        fixedSec: Math.round(totalMin * 60 * share), ff: s.ffCruise, proc: b.proc || null,
       }));
-      prevAlt = alt;
+      prevAlt = alt; prevLabel = altLabel;
       return;
     }
 
@@ -160,19 +174,26 @@ export function computeNavlog(plan, s = SOP) {
       const tasCD = climbing ? s.tasClimb : s.tasDescent;
       const minutes = Math.abs(dAlt) / (climbing ? s.roc : s.rod);
       const gsCD = windTriangle(tcRounded, tasCD, wdir, wspd).gs || tasCD;
-      let dCD = roundHalfUp((gsCD * minutes) / 60, 0.5);
+      const dCD = roundHalfUp((gsCD * minutes) / 60, 0.5);
       const label = climbing ? 'TOC' : 'TOD';
+      const cd = { tas: tasCD, phase: climbing ? 'climb' : 'descent', ff: climbing ? s.ffClimb : s.ffDescent };
       if (dCD >= leg.dist) {
         warnings.push(`${leg.a.name} → ${b.name}: ${label} is not reached before ${b.name} (${dCD} NM needed, leg is ${leg.dist} NM). Whole leg planned as ${climbing ? 'climb' : 'descent'}.`);
-        rows.push(segRow({ to: b.name, tas: tasCD, dist: leg.dist, phase: climbing ? 'climb' : 'descent', ff: climbing ? s.ffClimb : s.ffDescent }));
-      } else {
-        rows.push(segRow({ to: label, tas: tasCD, dist: dCD, phase: climbing ? 'climb' : 'descent', ff: climbing ? s.ffClimb : s.ffDescent, auto: true }));
+        rows.push(segRow({ to: b.name, dist: leg.dist, ...cd }));
+      } else if (climbing) {
+        // climb at the start of the leg, level off at TOC
+        rows.push(segRow({ to: label, dist: dCD, auto: true, ...cd }));
         rows.push(segRow({ from: label, to: b.name, tas: cruiseT, dist: r1(leg.dist - dCD), phase: 'cruise', ff: s.ffCruise }));
+      } else {
+        // cruise at the old altitude, start descent at TOD to reach the waypoint at the new altitude
+        const prevT = cruiseTas(prevAlt ?? 0, s);
+        rows.push(segRow({ to: label, alt: prevAlt, altLabel: prevLabel, tas: prevT, dist: r1(leg.dist - dCD), phase: 'cruise', ff: s.ffCruise, auto: true }));
+        rows.push(segRow({ from: label, to: b.name, dist: dCD, ...cd }));
       }
     } else {
       rows.push(segRow({ to: b.name, tas: cruiseT, dist: leg.dist, phase: 'cruise', ff: s.ffCruise }));
     }
-    prevAlt = alt;
+    prevAlt = alt; prevLabel = altLabel;
   });
 
   // Distance remaining, fuel remaining.
