@@ -1,0 +1,40 @@
+name: Chart previews
+
+# Push to the "previews-request" branch to render small previews of the chart sheets
+# and of the Burgos area into the "previews" branch (used to check sheet margins).
+on:
+  push:
+    branches: [previews-request]
+
+permissions:
+  contents: write
+
+jobs:
+  previews:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Render previews
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq gdal-bin
+          curl -fsSL https://aip.enaire.es/AIP/CartasInsigniaImpresas-es.html -o page.html
+          mkdir -p out
+          for sheet in LE4_CENTRONORTE LE1_NORTE; do
+            path=$(grep -oiE "recursos/descargas/VFR500/[0-9]{4}_${sheet}\.zip" page.html | head -1)
+            curl -fsSL "https://aip.enaire.es/$path" -o "$sheet.zip"
+            mkdir -p "$sheet" && unzip -q "$sheet.zip" -d "$sheet"
+            tif=$(find "$sheet" -iname '*.tif*' | head -1)
+            gdalinfo "$tif" | grep -vE '^\s+[0-9]+: ' > "out/$sheet-gdalinfo.txt"
+            opts=""; gdalinfo "$tif" | grep -q 'Color Table' && opts="-expand rgb"
+            gdal_translate -q $opts -of PNG -outsize 1400 0 "$tif" "out/$sheet.png"
+            # Burgos area (lon/lat window), full resolution
+            gdalwarp -q -t_srs EPSG:4326 -te -4.3 41.9 -3.0 42.8 -ts 1300 0 "$tif" "out/$sheet-burgos.tif"
+            gdal_translate -q $opts -of PNG "out/$sheet-burgos.tif" "out/$sheet-burgos.png" && rm "out/$sheet-burgos.tif"
+          done
+          ls -la out
+      - name: Publish to previews branch
+        run: |
+          cd out
+          git init -q -b previews
+          git config user.name "github-actions"; git config user.email "actions@github.com"
+          git add -A && git commit -qm "Chart previews"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" previews
