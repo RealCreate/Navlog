@@ -1,53 +1,52 @@
 #!/usr/bin/env python3
-"""Builds data/places.json (town and village names) from OpenStreetMap via Overpass.
+"""Builds data/places.json (city, town and village names) from the GeoNames dump for Spain.
 
 Output: [[name, lat, lon, rank], ...] sorted by importance; rank 0 city, 1 town, 2 village.
 Area: the VFR chart sheets used by the app (northern and north-central Spain).
+Data: GeoNames (CC BY 4.0), https://download.geonames.org/export/dump/ES.zip
 """
-import json, sys, time, urllib.parse, urllib.request
+import csv, io, sys, urllib.request, zipfile
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "data/places.json"
-BBOX = (39.4, -9.6, 43.95, -1.0)  # S, W, N, E
-QUERY = f"""
-[out:json][timeout:300];
-node["place"~"^(city|town|village)$"]["name"]({BBOX[0]},{BBOX[1]},{BBOX[2]},{BBOX[3]});
-out;
-"""
-SERVERS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"]
-RANK = {"city": 0, "town": 1, "village": 2}
+S, W, N, E = 39.4, -9.6, 43.95, -1.0
+URL = "https://download.geonames.org/export/dump/ES.zip"
 
-data = None
-for attempt in range(3):
-    for url in SERVERS:
-        try:
-            req = urllib.request.Request(url, data=urllib.parse.urlencode({"data": QUERY}).encode(),
-                                         headers={"User-Agent": "navlog-app (github.com/RealCreate/Navlog)"})
-            with urllib.request.urlopen(req, timeout=400) as r:
-                data = json.load(r)
-            break
-        except Exception as e:  # try the next mirror
-            print(f"{url}: {e}", file=sys.stderr)
-    if data:
-        break
-    time.sleep(30)
-if not data:
-    sys.exit("Overpass unavailable")
-
-def pop(tags):
-    try:
-        return int(str(tags.get("population", "0")).replace(".", "").replace(",", "").split()[0])
-    except ValueError:
-        return 0
+req = urllib.request.Request(URL, headers={"User-Agent": "navlog-app (github.com/RealCreate/Navlog)"})
+raw = urllib.request.urlopen(req, timeout=300).read()
+z = zipfile.ZipFile(io.BytesIO(raw))
+text = z.read("ES.txt").decode("utf-8")
+csv.field_size_limit(10**7)
 
 rows = []
-for el in data["elements"]:
-    t = el.get("tags", {})
-    name = t.get("name:es") or t.get("name")
-    if not name:
+for r in csv.reader(io.StringIO(text), delimiter="\t", quoting=csv.QUOTE_NONE):
+    # geonameid, name, asciiname, alternatenames, lat, lon, fclass, fcode, cc, cc2, a1, a2, a3, a4, population, ...
+    if len(r) < 15 or r[6] != "P" or r[7] in ("PPLH", "PPLQ", "PPLW", "PPLX", "PPLCH"):
         continue
-    rows.append((RANK[t["place"]], -pop(t), name, round(el["lat"], 5), round(el["lon"], 5)))
+    lat, lon = float(r[4]), float(r[5])
+    if not (S <= lat <= N and W <= lon <= E):
+        continue
+    pop = int(r[14] or 0)
+    code = r[7]
+    if pop >= 50000 or code in ("PPLC", "PPLA", "PPLA2"):
+        rank = 0
+    elif pop >= 3000 or code == "PPLA3":
+        rank = 1
+    else:
+        rank = 2
+    rows.append((rank, -pop, r[1], round(lat, 5), round(lon, 5)))
+
 rows.sort()
-out = [[n, lat, lon, rank] for rank, _, n, lat, lon in rows]
+seen, out = set(), []
+for rank, _, name, lat, lon in rows:
+    key = (name, round(lat, 2), round(lon, 2))
+    if key in seen:
+        continue
+    seen.add(key)
+    out.append([name, lat, lon, rank])
+
+import json
 with open(OUT, "w", encoding="utf-8") as f:
     json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
-print(f"{len(out)} places -> {OUT}")
+print(f"{len(out)} places -> {OUT}; cities {sum(1 for o in out if o[3]==0)}, towns {sum(1 for o in out if o[3]==1)}")
+if len(out) < 500:
+    sys.exit("Too few places — something went wrong")

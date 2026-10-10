@@ -1,4 +1,4 @@
-// Town and village names drawn over the chart (OpenStreetMap data, built in CI into
+// Town and village names drawn over the chart (GeoNames data, built in CI into
 // data/places.json as [name, lat, lon, rank]; rank 0 = city, 1 = town, 2 = village).
 // Labels are decluttered so they never overlap each other.
 
@@ -9,7 +9,7 @@ const MIN_ZOOM = [6, 8, 10]; // first zoom at which each rank appears
 export const PlacesLayer = L.Layer.extend({
   initialize(places) { this._places = places; },
 
-  getAttribution() { return 'Names © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>'; },
+  getAttribution() { return 'Names © <a href="https://www.geonames.org" target="_blank" rel="noopener">GeoNames</a>'; },
 
   onAdd(map) {
     this._map = map;

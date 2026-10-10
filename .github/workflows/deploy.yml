@@ -80,7 +80,7 @@ jobs:
           path: data
           key: places-${{ steps.month.outputs.m }}-${{ hashFiles('tools/build-places.py') }}
 
-      - name: Build place names (OpenStreetMap)
+      - name: Build place names (GeoNames)
         if: steps.places.outputs.cache-hit != 'true'
         continue-on-error: true
         run: mkdir -p data-tmp && python3 tools/build-places.py data-tmp/places.json && mkdir -p data && mv data-tmp/places.json data/

@@ -178,7 +178,7 @@ POINTS.forEach((p) => {
 
 const routeLayer = L.layerGroup().addTo(map);
 
-// Town and village names (OpenStreetMap)
+// Town and village names (GeoNames)
 let placesLayer = null;
 fetch('data/places.json').then((r) => (r.ok ? r.json() : [])).then((places) => {
   if (!places.length) return;
