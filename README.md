@@ -1,7 +1,7 @@
 # Navlog
 
-Personal VFR navigation-log planner for FlyBy training flights, built to follow the
-FlyBy SOPs (SOP 2511 Phase 2 Training Manual — Flight Planning Manual) to the letter.
+Personal VFR navigation-log planner, built to follow the flight school's SOPs
+(Phase 2 Training Manual — Flight Planning Manual) to the letter.
 
 Live: https://realcreate.github.io/navlog/ (installable on iPad: Share → Add to Home Screen)
 
@@ -11,14 +11,14 @@ Live: https://realcreate.github.io/navlog/ (installable on iPad: Share → Add t
 - Tap the chart to add waypoints (SkyDemon style). Tapping a VRP or aerodrome snaps to it;
   tapping the departure aerodrome again closes the route. Drag a waypoint to move it,
   drag the dot in the middle of a leg to insert a point.
-- Builds the navlog exactly like the FlyBy form / LNAV Excel: TC, VAR/MC, ALT, TAS, wind,
+- Builds the navlog exactly like the school form / LNAV Excel: TC, VAR/MC, ALT, TAS, wind,
   WCA/MH, distance leg/remaining, GS, ETE, fuel/remaining, with automatic TOC/TOD rows.
 - Date & time slider for the flight, with sunrise/sunset and landing-time check.
 - Main route + alternate route, fuel policy check, P2008 mass & balance.
-- **Navlog PDF** fills the official FlyBy "Visual Operational Flight Plan" form.
+- **Navlog PDF** fills the school's "Visual Operational Flight Plan" form.
 - Works offline after loading; "Save chart for offline" caches the chart around the route.
 
-## SOP rules implemented (SOP 2511, Flight Planning Manual – Navigation Log)
+## SOP rules implemented (Flight Planning Manual – Navigation Log)
 
 | Item | Rule |
 | --- | --- |
