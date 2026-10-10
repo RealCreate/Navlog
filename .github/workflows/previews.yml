@@ -18,7 +18,7 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y -qq gdal-bin
           curl -fsSL https://aip.enaire.es/AIP/CartasInsigniaImpresas-es.html -o page.html
           mkdir -p out
-          for sheet in LE4_CENTRONORTE LE1_NORTE; do
+          for sheet in ${SHEETS:-}; do
             path=$(grep -oiE "recursos/descargas/VFR500/[0-9]{4}_${sheet}\.zip" page.html | head -1)
             curl -fsSL "https://aip.enaire.es/$path" -o "$sheet.zip"
             mkdir -p "$sheet" && unzip -q "$sheet.zip" -d "$sheet"
@@ -29,6 +29,10 @@ jobs:
             # Burgos area (lon/lat window), full resolution
             gdalwarp -q -t_srs EPSG:4326 -te -4.3 41.9 -3.0 42.8 -ts 1300 0 "$tif" "out/$sheet-burgos.tif"
             gdal_translate -q $opts -of PNG "out/$sheet-burgos.tif" "out/$sheet-burgos.png" && rm "out/$sheet-burgos.tif"
+          done
+          sudo apt-get install -y -qq poppler-utils
+          for ad in LEBG LERJ; do
+            curl -fsSL "https://aip.enaire.es/AIP/contenido_AIP/AD/AD2/$ad/LE_AD_2_${ad}_VAC_1_en.pdf" -o "$ad-vac.pdf" && pdftoppm -r 130 -png "$ad-vac.pdf" "out/$ad-vac" || true
           done
           ls -la out
       - name: Publish to previews branch
