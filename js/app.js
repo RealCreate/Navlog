@@ -1,7 +1,8 @@
 import { AERODROMES, POINTS, FLEET_TYPES, fleetType, SOP, adByIcao, mergeAip, procedureFor, PROCEDURES } from './data.js';
 import { computeNavlog, stdFlags, fuelPolicy, fmtMMSS, fmtHMS, fmtVar, fmtAlt, parseAlt, cruiseTas, distanceNm, midpoint } from './nav.js';
 import { buildNavlogPdf, buildMbPdf } from './pdf.js';
-import { addBriefingPages, addMissionCover, fonts as pdfFonts } from './briefpdf.js';
+import { addBriefingPages, addMissionCover, fonts as pdfFonts, pdfText } from './briefpdf.js';
+import { renderRouteMap, addMapPage } from './mapprint.js';
 import { sampleTerrain, plannedProfile, drawProfile, profileAt } from './profile.js';
 import { PlacesLayer } from './places.js';
 import { fetchWinds } from './winds.js';
@@ -2127,7 +2128,10 @@ function legPack(fob) {
   const sheets = [{ header: headerFor('main'), rows: result.main.rows }];
   if (result.alt.rows.length) sheets.push({ header: headerFor('alt'), rows: result.alt.rows });
   const mbArgs = result.mb ? [result.mb, { date: t.toLocaleDateString('en-GB'), reg: f.reg, studentCode: state.mb.studentCode, weather: f.weather, notams: state.mb.notams, perf: B.perf }] : null;
-  return { B, meta, sheets: result.main.rows.length ? sheets : null, mbArgs };
+  const routes = [{ wps: clone(state.main.waypoints), rows: clone(result.main.rows), color: '#d1009a' }];
+  if (state.alt.waypoints.length > 1) routes.push({ wps: clone(state.alt.waypoints), rows: clone(result.alt.rows), color: '#0a84ff', alt: true });
+  const mapData = state.main.waypoints.length > 1 ? { routes, title: `${B.dep?.icao || ''} -> ${B.dest?.icao || ''}${B.alt ? ` (alternate ${B.alt.icao})` : ''}` } : null;
+  return { B, meta, sheets: result.main.rows.length ? sheets : null, mbArgs, mapData };
 }
 
 async function downloadBriefing() {
@@ -2170,6 +2174,10 @@ async function downloadBriefing() {
     }
     for (const p of packs) {
       addBriefingPages(out, F, p.B, p.meta);
+      if (p.mapData) {
+        const img = await renderRouteMap(p.mapData.routes, { title: p.mapData.title });
+        if (img) await addMapPage(out, img, pdfText(`Marked chart · ${p.mapData.title} · 2-min marks at planned GS · HAT = heading, altitude, time`));
+      }
       if (p.sheets) await add(await buildNavlogPdf(p.sheets));
       if (p.withMb && p.mbArgs) await add(await buildMbPdf(...p.mbArgs));
     }
