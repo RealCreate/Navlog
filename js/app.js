@@ -9,7 +9,7 @@ import { PlacesLayer } from './places.js';
 import { fetchWinds } from './winds.js';
 import { fetchWeather, assess, metarSummary, crosswind } from './weather.js';
 import { performance, pressureAlt, isaTemp, FT_PER_M } from './perf.js';
-import { chartAirspaces, drawAirspaces, drawAmaGrid, airspaceLabels, worldPx as wpx } from './aviation.js';
+import { chartAirspaces, drawAirspaces, drawAmaGrid, airspaceLabels, worldPx as wpx, drawNavaids, navaidLabel, drawObstacles } from './aviation.js';
 import { MB_TYPES, computeMb, fmtMoment, cgLimitsAt, KG_TO_LB } from './mb.js';
 import { zl, utc, local } from './time.js';
 import { APPROVED, IFR_ONLY, EASY_FIRST, FULL_STOP, CLOSING_LOCAL, NO_REFUEL, FREQS, AIP_NOTES, aipNotes, aerodromeOpen, airspaceCrossings, crossingIssue, buildFpl, departureBriefing, arrivalBriefing, temThreats } from './rules.js';
@@ -185,7 +185,7 @@ const ownLayer = L.tileLayer('chart/{z}/{x}/{y}.webp', {
   attribution: 'Terrain SRTM · map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> · airspace ENAIRE AIP',
 });
 let ownMeta = null;
-let CHART_AS = [], AMA_CELLS = [], AS_LABELS = [];
+let CHART_AS = [], AMA_CELLS = [], AS_LABELS = [], NAVAIDS = [], OBSTACLES = [];
 // Airspaces as canvas tiles (sharp at every zoom, drawn from the AIP data)
 const AviationLayer = L.GridLayer.extend({
   createTile(coords) {
@@ -200,6 +200,8 @@ const AviationLayer = L.GridLayer.extend({
     const view = { n: nw.lat + pad, s: se.lat - pad, w: nw.lng - pad, e: se.lng + pad };
     if (z >= 7) drawAmaGrid(g, AMA_CELLS.filter((a) => !(a.e < view.w || a.w > view.e || a.n < view.s || a.s > view.n)), P);
     drawAirspaces(g, CHART_AS, P, z, 1, view);
+    drawNavaids(g, NAVAIDS.filter((n) => n.lat > view.s - 0.15 && n.lat < view.n + 0.15 && n.lon > view.w - 0.2 && n.lon < view.e + 0.2), P, z, 1, (la, lo) => defaultVar(la, lo));
+    drawObstacles(g, OBSTACLES, P, z, 1, view, sz.x);
     return c;
   },
 });
@@ -207,30 +209,52 @@ const aviationLayer = new AviationLayer({ pane: 'labels', zIndex: 5, updateWhenZ
 map.createPane('aviation').style.zIndex = 405;
 aviationLayer.options.pane = 'aviation';
 const asLabelLayer = L.layerGroup();
+// Labels with simple collision avoidance: higher-priority labels first (restricted areas, CTA
+// sectors, airspace edges, navaids, grid figures); a label that would overlap one already placed,
+// or an aerodrome / reporting point symbol, is left out at this zoom.
 function buildAsLabels() {
   asLabelLayer.clearLayers();
   const z = map.getZoom();
-  if (z >= 7) for (const c of AMA_CELLS) {
-    asLabelLayer.addLayer(L.marker([c.n - (c.n - c.s) * 0.22, c.w + (c.e - c.w) * 0.72], { pane: 'aviation', interactive: false, keyboard: false,
-      icon: L.divIcon({ className: '', iconSize: [0, 0], html: `<span class="ama">${Math.floor(c.v / 10)}<small>${c.v % 10}</small></span>` }) }));
+  const placed = [];
+  const hit = (r) => placed.some((q) => r.x0 < q.x1 && r.x1 > q.x0 && r.y0 < q.y1 && r.y1 > q.y0);
+  const rectAt = (lat, lon, w, h, ang = 0) => {
+    const p = map.project([lat, lon], z), a = (ang * Math.PI) / 180;
+    const W = Math.abs(w * Math.cos(a)) + Math.abs(h * Math.sin(a)), H = Math.abs(w * Math.sin(a)) + Math.abs(h * Math.cos(a));
+    return { x0: p.x - W / 2, x1: p.x + W / 2, y0: p.y - H / 2, y1: p.y + H / 2 };
+  };
+  if (state.view.points) for (const p of POINTS) { if (p.type === 'vrp' && z < 9) continue; const q = map.project([p.lat, p.lon], z); placed.push({ x0: q.x - 9, x1: q.x + 44, y0: q.y - 9, y1: q.y + 9 }); }
+  const add = (lat, lon, html, rect) => { if (hit(rect)) return false; placed.push(rect); asLabelLayer.addLayer(L.marker([lat, lon], { pane: 'aviation', interactive: false, keyboard: false, icon: L.divIcon({ className: '', iconSize: [0, 0], html }) })); return true; };
+  const boxes = AS_LABELS.filter((l) => l.kind === 'box').sort((a, b) => (a.color === NAVY_C) - (b.color === NAVY_C));
+  for (const l of boxes) {
+    if (z < (l.minZoom || 9)) continue;
+    const w = Math.max(...l.lines.map((t) => t.length)) * 6.6 + 6, h = l.lines.length * 14;
+    add(l.lat, l.lon, `<span class="as-box" style="color:${l.color}">${l.lines.map(esc).join('<br>')}</span>`, rectAt(l.lat, l.lon, w, h));
   }
   for (const l of AS_LABELS) {
-    if (l.kind === 'edge') {
-      if (z < (l.minZoom || 8)) continue;
-      if (l.edgePx10 * 2 ** (z - 10) < l.text.length * 6.2 + 20) continue; // edge too short at this zoom
-      asLabelLayer.addLayer(L.marker([l.lat, l.lon], { pane: 'aviation', interactive: false, keyboard: false,
-        icon: L.divIcon({ className: '', iconSize: [0, 0], html: `<span class="as-edge" style="--a:${l.angle.toFixed(1)}deg;color:${l.color}">${esc(l.text)}</span>` }) }));
-    } else if (z >= (l.minZoom || 9)) {
-      asLabelLayer.addLayer(L.marker([l.lat, l.lon], { pane: 'aviation', interactive: false, keyboard: false,
-        icon: L.divIcon({ className: '', iconSize: [0, 0], html: `<span class="as-box" style="color:${l.color}">${l.lines.map(esc).join('<br>')}</span>` }) }));
-    }
+    if (l.kind !== 'edge' || z < (l.minZoom || 8)) continue;
+    const w = l.text.length * 6.3 + 6;
+    if (l.edgePx10 * 2 ** (z - 10) < w + 14) continue; // edge too short at this zoom
+    add(l.lat, l.lon, `<span class="as-edge" style="--a:${l.angle.toFixed(1)}deg;color:${l.color}">${esc(l.text)}</span>`, rectAt(l.lat, l.lon, w, 13, l.angle));
+  }
+  if (z >= 9) for (const n of NAVAIDS) {
+    if (/ILS/i.test(n.type)) continue;
+    const lb = navaidLabel(n), off = /VOR/i.test(n.type) ? 0.035 * 2 ** (10 - z) * 3 : 0.012 * 2 ** (10 - z) * 3;
+    const lat = n.lat - off, lon = n.lon + off * 1.3;
+    const w = Math.max(...lb.lines.map((t) => t.length)) * 6.4 + 12, h = 32;
+    add(lat, lon, `<span class="nav-box">${lb.lines.map(esc).join('<br>')}</span>`, rectAt(lat, lon, w, h));
+  }
+  if (z >= 7) for (const c of AMA_CELLS) {
+    const lat = c.n - (c.n - c.s) * 0.22, lon = c.w + (c.e - c.w) * 0.72;
+    add(lat, lon, `<span class="ama">${Math.floor(c.v / 10)}<small>${c.v % 10}</small></span>`, rectAt(lat, lon, 40, 34));
   }
 }
+const NAVY_C = '#1d3f8f';
 map.on('zoomend', () => { if (map.hasLayer(asLabelLayer)) buildAsLabels(); });
 function setAviationData(aip) {
   CHART_AS = chartAirspaces(aip.airspaces || []);
   AMA_CELLS = aip.ama || [];
   AS_LABELS = airspaceLabels(CHART_AS, (aip.aerodromes || []).map((a) => [a.lat, a.lon]));
+  NAVAIDS = aip.navaids || [];
   aviationLayer.redraw(); buildAsLabels();
 }
 
@@ -318,6 +342,12 @@ let AIRSPACES = [];
 fetch('data/aip.json').then((r) => (r.ok ? r.json() : null)).then((aip) => {
   if (aip && aip.airspaces) { AIRSPACES = aip.airspaces; setAviationData(aip); }
   if (mergeAip(aip)) { buildPoints(); update({ rerenderPanels: true }); }
+}).catch(() => {});
+
+// ENAIRE obstacles (≥ 100 m): chart symbols, profile and minimum-altitude check
+fetch('data/obstacles.json').then((r) => (r.ok ? r.json() : null)).then((d) => {
+  if (!d || !d.obstacles) return;
+  OBSTACLES = d.obstacles; aviationLayer.redraw(); update({ rerenderPanels: true });
 }).catch(() => {});
 
 const routeLayer = L.layerGroup().addTo(map);
@@ -957,7 +987,9 @@ function renderRoute() {
           const last = legRows[legRows.length - 1];
           const dist = legRows.reduce((t, x) => t + x.dist, 0);
           const sera = !w.proc && !w.entry && !(i === 1 && stdOn.dep) && !(i === wps.length - 1 && stdOn.arr) ? semicircularHint(last.mc, parseAlt(w.alt)) : null;
-          html += `<div class="leg-out">${w.proc ? `<span class="tag">${w.proc === 'dep' ? 'Departure route' : 'Arrival route'} · VAC</span>` : ''}<span>TC <b>${last.tc}°</b></span><span>MH <b>${last.mh}°</b></span><span>Dist <b>${dist} NM</b></span><span>GS <b>${last.gs} kt</b></span><span>ETE <b>${fmtMMSS(ete)}</b></span><span>Fuel <b>${fuel} L</b></span>${legRows.length > 1 ? `<span>incl. <b>${legRows.find((x) => x.auto)?.to || ''}</b></span>` : ''}${sera ? `<span class="hint">${sera}</span>` : ''}</div>`;
+          const lm = legMinimum(key, i);
+          const lmLow = lm && !w.proc && !w.entry && parseAlt(w.alt) != null && parseAlt(w.alt) < lm.need;
+          html += `<div class="leg-out">${w.proc ? `<span class="tag">${w.proc === 'dep' ? 'Departure route' : 'Arrival route'} · VAC</span>` : ''}<span>TC <b>${last.tc}°</b></span><span>MH <b>${last.mh}°</b></span><span>Dist <b>${dist} NM</b></span><span>GS <b>${last.gs} kt</b></span><span>ETE <b>${fmtMMSS(ete)}</b></span><span>Fuel <b>${fuel} L</b></span>${legRows.length > 1 ? `<span>incl. <b>${legRows.find((x) => x.auto)?.to || ''}</b></span>` : ''}${lm ? `<span class="${lmLow ? 'minalt low' : 'minalt'}" title="${esc(lm.why)}">Min <b>${lm.need} ft</b></span>` : ''}${sera ? `<span class="hint">${sera}</span>` : ''}${lmLow ? `<span class="hint">Below the minimum: ${esc(lm.why)}</span>` : ''}</div>`;
         }
       }
       html += '</div>';
@@ -1451,6 +1483,17 @@ function planIssues() {
   }
   // cruising levels
   issues.push(...seraIssues('main'));
+  // minimum altitude per leg (obstacles + terrain)
+  for (const key of ['main', 'alt']) {
+    const wps = state[key].waypoints;
+    for (let i = 1; i < wps.length; i++) {
+      const w = wps[i], alt = parseAlt(w.alt);
+      if (alt == null || /^FL/i.test(String(w.alt))) continue;
+      const lm = legMinimum(key, i);
+      const procLeg = w.proc || w.entry; // VAC / SOP altitude: flown as published, the check is only a note
+      if (lm && alt < lm.need) issues.push({ level: procLeg ? 'info' : 'warn', text: `${key === 'alt' ? 'Alternate ' : ''}${wps[i - 1].name} → ${w.name}: ${alt} ft is below ${procLeg ? '1000 ft above the highest obstacle' : `the minimum ${lm.need} ft`} — ${lm.why}${procLeg ? ' (published VAC/SOP altitude — keep the obstacle in sight)' : `; SOP 1000 ft above the highest obstacle${lm.mountain ? ' (2000 ft over mountains)' : ''}`}` });
+    }
+  }
   // airspace along the route
   for (const key of ['main', 'alt']) {
     const ends = [endpoint(key, 0), endpoint(key, -1)].filter(Boolean);
@@ -1995,6 +2038,46 @@ async function loadTerrain() {
     if (terrainKey === k) { terrainErr = true; terrainKey = null; renderProfile(); }
   }
 }
+// Minimum altitude for a leg (school SOP: 1000 ft above the highest obstacle within the corridor,
+// 2000 ft over mountainous terrain): ENAIRE obstacles (≥ 100 m) within 2 NM of the track and the
+// terrain within 2 NM (when loaded for this route). Obstacles within 3 NM of a departure or arrival
+// aerodrome are left to the aerodrome procedures.
+const CORRIDOR_NM = 2;
+function nmToSeg(p, a, b) {
+  const kx = 60 * Math.cos((((a.lat + b.lat) / 2) * Math.PI) / 180), ky = 60;
+  const ax = a.lon * kx, ay = a.lat * ky, bx = b.lon * kx, by = b.lat * ky, px = p[1] * kx, py = p[0] * ky;
+  const dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy || 1e-9;
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / L2));
+  return { d: Math.hypot(px - ax - t * dx, py - ay - t * dy), t };
+}
+function legMinimum(key, i) {
+  const wps = state[key].waypoints, a = wps[i - 1], b = wps[i];
+  if (!a || !b) return null;
+  const isAd = (w) => w && w.ref && adByIcao(w.ref);
+  const lat0 = Math.min(a.lat, b.lat) - 0.04, lat1 = Math.max(a.lat, b.lat) + 0.04, lon0 = Math.min(a.lon, b.lon) - 0.05, lon1 = Math.max(a.lon, b.lon) + 0.05;
+  let ob = null;
+  for (const o of OBSTACLES) {
+    if (o[0] < lat0 || o[0] > lat1 || o[1] < lon0 || o[1] > lon1) continue;
+    const r = nmToSeg(o, a, b);
+    if (r.d > CORRIDOR_NM) continue;
+    if ((isAd(a) && distanceNm(a, { lat: o[0], lon: o[1] }) < 3) || (isAd(b) && distanceNm(b, { lat: o[0], lon: o[1] }) < 3)) continue;
+    if (!ob || o[2] > ob.top) ob = { top: o[2], type: o[4], off: r.d };
+  }
+  let terr = null;
+  if (key === state.active && terrainData && terrainData.length) {
+    const dists = legDistances(key); let d0 = 0; for (let k = 0; k < i - 1; k++) d0 += dists[k] || 0;
+    const d1 = d0 + (dists[i - 1] || 0);
+    const seg = terrainData.filter((t) => t.d >= d0 + (isAd(a) ? 3 : 0) && t.d <= d1 - (isAd(b) ? 3 : 0));
+    if (seg.length) terr = Math.round(Math.max(...seg.map((t) => t.corridor)));
+  }
+  if (!ob && terr == null) return null;
+  const base = Math.max(ob ? ob.top : 0, terr || 0);
+  const mountain = (terr || 0) >= 4000;
+  const need = Math.ceil((base + (mountain ? 2000 : 1000)) / 100) * 100;
+  const why = ob && ob.top >= (terr || 0) ? `obstacle ${ob.top} ft (${({ w: 'wind turbine', a: 'antenna', t: 'tower' })[ob.type] || 'obstacle'}, ${ob.off.toFixed(1)} NM from track)` : `terrain ${terr} ft within ${CORRIDOR_NM} NM`;
+  return { need, why, mountain };
+}
+
 // Default cruising level for an en-route leg from the terrain: the lowest level of the Spanish
 // north/south rule (southbound 3500/5500/7500, northbound 4500/6500/8500) that keeps 1000 ft above
 // the highest terrain within 2 NM of the track (2000 ft over mountainous terrain, above 4000 ft).
@@ -2010,7 +2093,8 @@ function autoLevels(key, terr) {
       const seg = terr.filter((t) => t.d >= d0 - 0.01 && t.d <= d1 + 0.01);
       if (seg.length) {
         const top = Math.max(...seg.map((t) => t.corridor));
-        const need = top + (top >= 4000 ? 2000 : 1000);
+        const lm = legMinimum(key, i);
+        const need = Math.max(top + (top >= 4000 ? 2000 : 1000), lm ? lm.need : 0);
         const mc = ((Math.round(trueCourse(wps[i - 1], w) - (wps[i - 1].var || 0)) % 360) + 360) % 360;
         const levels = southbound(mc) ? [3500, 5500, 7500, 9500] : [4500, 6500, 8500];
         const alt = levels.find((l) => l >= need) || levels[levels.length - 1];
@@ -2020,6 +2104,22 @@ function autoLevels(key, terr) {
     d0 = d1;
   }
   return changed;
+}
+// obstacles within the corridor, as distance along the route (for the profile)
+function profileObstacles(key) {
+  const wps = state[key].waypoints, dists = legDistances(key), out = [];
+  let d0 = 0;
+  for (let i = 1; i < wps.length; i++) {
+    const a = wps[i - 1], b = wps[i], L = dists[i - 1] || 0;
+    const lat0 = Math.min(a.lat, b.lat) - 0.04, lat1 = Math.max(a.lat, b.lat) + 0.04, lon0 = Math.min(a.lon, b.lon) - 0.05, lon1 = Math.max(a.lon, b.lon) + 0.05;
+    for (const o of OBSTACLES) {
+      if (o[0] < lat0 || o[0] > lat1 || o[1] < lon0 || o[1] > lon1) continue;
+      const r = nmToSeg(o, a, b);
+      if (r.d <= CORRIDOR_NM) out.push({ d: d0 + r.t * L, top: o[2], h: o[3] || 0 });
+    }
+    d0 += L;
+  }
+  return out;
 }
 function renderProfile() {
   if (!result) return;
@@ -2032,7 +2132,7 @@ function renderProfile() {
     ? [[document.getElementById('profileCanvas'), document.getElementById('profileInfo')]]
     : (state.mode === 'plan' && tab === 'profile' ? [[document.getElementById('profileCanvasSheet'), document.getElementById('profileNoteSheet')]] : []);
   for (const [canvas, info] of targets) {
-    const res = drawProfile(canvas, { planned, terrain: terrainData, color });
+    const res = drawProfile(canvas, { planned, terrain: terrainData, color, obstacles: profileObstacles(key) });
     let txt = '';
     if (planned) {
       if (terrainErr) txt = 'Terrain unavailable (offline?)';
@@ -2041,7 +2141,7 @@ function renderProfile() {
         txt = `Highest terrain ±2 NM: ${res.maxTerrain} ft`;
         if (res.minClearance != null) txt += ` · min clearance ${res.minClearance} ft${res.minClearance < 1000 ? ' ⚠︎ below 1000 ft' : ''}`;
       }
-      txt += ' · obstacles not included — check the chart';
+      txt += OBSTACLES.length ? ' · obstacles ≥ 100 m (ENAIRE) within 2 NM shown — smaller ones are not, check the chart' : ' · obstacles not loaded — check the chart';
     }
     info.textContent = txt;
     info.classList.toggle('warn', !!(res && res.minClearance != null && res.minClearance < 1000));
@@ -2710,7 +2810,7 @@ async function downloadBriefing() {
         } catch { chartsMissing = true; }
       }
       if (p.mapData) {
-        const img = await renderRouteMap(p.mapData.routes, { title: p.mapData.title, aviation: ownMeta && state.view.base !== 'vfr' ? { list: CHART_AS, labels: AS_LABELS, ama: AMA_CELLS } : null });
+        const img = await renderRouteMap(p.mapData.routes, { title: p.mapData.title, aviation: ownMeta && state.view.base !== 'vfr' ? { list: CHART_AS, labels: AS_LABELS, ama: AMA_CELLS, navaids: NAVAIDS, obstacles: OBSTACLES, varAt: defaultVar } : null });
         if (img) await addMapPage(out, img, pdfText(`Marked chart · ${p.mapData.title} · 2-min marks at planned GS · HAT = heading, altitude, time`));
       }
       if (p.sheets) await add(await buildNavlogPdf(p.sheets));

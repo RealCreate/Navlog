@@ -485,3 +485,7 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
 .as-box { position: absolute; transform: translate(-50%, -50%); text-align: center; white-space: nowrap; font: 800 11px/1.25 var(--font); color: #cc2a2a; text-shadow: 0 0 2px #fff, 0 0 2px #fff, 0 0 3px #fff; pointer-events: none; }
 .ama { position: absolute; transform: translate(-50%, -50%); font: 900 34px/1 var(--font); color: rgba(205, 35, 35, 0.55); text-shadow: 0 0 2px rgba(255,255,255,0.6); pointer-events: none; }
 .ama small { font-size: 20px; }
+
+.nav-box { position: absolute; transform: translate(-50%, -50%); white-space: nowrap; text-align: center; font: 700 10.5px/1.3 var(--font); color: #1d3f8f; background: rgba(255,255,255,0.88); border: 1.2px solid #1d3f8f; border-radius: 3px; padding: 2px 5px; pointer-events: none; }
+.leg-out .minalt b { color: var(--ok); }
+.leg-out .minalt.low b { color: var(--bad); }

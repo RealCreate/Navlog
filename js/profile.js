@@ -97,7 +97,7 @@ export function plannedProfile(rows, depElev, destElev) {
  * Draws the profile. opts: { planned, terrain, color, dark }
  * Returns { maxTerrain, minClearance }.
  */
-export function drawProfile(canvas, { planned, terrain, color = '#d1009a' }) {
+export function drawProfile(canvas, { planned, terrain, color = '#d1009a', obstacles = [] }) {
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth, h = canvas.clientHeight;
   if (!w || !h) return null;
@@ -120,7 +120,8 @@ export function drawProfile(canvas, { planned, terrain, color = '#d1009a' }) {
 
   const totalD = planned[planned.length - 1].d || 1;
   const maxTerr = terrain && terrain.length ? Math.max(...terrain.map((t) => t.corridor)) : 0;
-  const maxAlt = Math.max(maxTerr, ...planned.map((p) => p.alt));
+  const maxObs = obstacles.length ? Math.max(...obstacles.map((o) => o.top)) : 0;
+  const maxAlt = Math.max(maxTerr, maxObs, ...planned.map((p) => p.alt));
   const top = Math.ceil((maxAlt + 1500) / 1000) * 1000;
   const padL = 36, padR = 12, padT = 18, padB = 18;
   const X = (d) => padL + (d / totalD) * (w - padL - padR);
@@ -151,6 +152,13 @@ export function drawProfile(canvas, { planned, terrain, color = '#d1009a' }) {
     area('centre', g);
   }
 
+  // ENAIRE obstacles within 2 NM of the track (top elevation)
+  for (const o of obstacles) {
+    const x = X(o.d), y = Y(o.top);
+    ctx.strokeStyle = dark ? '#f5f5f7' : '#1b1b1b'; ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.moveTo(x - 3, Y(Math.max(0, o.top - o.h))); ctx.lineTo(x, y); ctx.lineTo(x + 3, Y(Math.max(0, o.top - o.h))); ctx.stroke();
+  }
+
   // planned altitude
   ctx.lineJoin = 'round'; ctx.lineCap = 'round';
   ctx.strokeStyle = dark ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.9)'; ctx.lineWidth = 6;
@@ -173,6 +181,11 @@ export function drawProfile(canvas, { planned, terrain, color = '#d1009a' }) {
       if (t.d < 3 || t.d > totalD - 3) return;
       const c = altAt(t.d) - t.corridor;
       if (c < minClear) { minClear = c; minAt = t; }
+    });
+    obstacles.forEach((o) => {
+      if (o.d < 3 || o.d > totalD - 3) return;
+      const c = altAt(o.d) - o.top;
+      if (c < minClear) { minClear = c; minAt = { d: o.d, corridor: o.top }; }
     });
     if (minAt && minClear < 1000) {
       ctx.fillStyle = '#ff3b30';

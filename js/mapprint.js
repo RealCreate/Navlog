@@ -10,7 +10,7 @@ const worldPx = (lat, lon, z) => {
   return { x: ((lon + 180) / 360) * n, y: ((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2) * n };
 };
 
-import { drawAirspaces, drawAmaGrid, drawLabels } from './aviation.js';
+import { drawAirspaces, drawAmaGrid, drawLabels, drawNavaids, drawObstacles, navaidLabel } from './aviation.js';
 
 async function tile(z, x, y, dir = 'tiles') {
   try {
@@ -58,8 +58,11 @@ export async function renderRouteMap(routes, { width = 2400, height = 1650, titl
     const k = 2 * s0;
     drawAmaGrid(g, aviation.ama, PP, k);
     drawAirspaces(g, aviation.list, PP, z, k);
+    drawNavaids(g, aviation.navaids || [], PP, Math.max(z, 9), k, aviation.varAt || (() => 0));
+    drawObstacles(g, aviation.obstacles || [], PP, Math.max(z, 11), k * 0.8);
     const vis = (l) => { const [x, y] = PP(l.lat, l.lon); return x > -50 && y > -50 && x < width + 50 && y < height + 50; };
-    drawLabels(g, aviation.labels.filter((l) => vis(l) && (l.kind !== 'edge' || l.edgePx10 * 2 ** (z - 10) * 2 > l.text.length * 13)), PP, k * 0.9, aviation.ama.filter((c) => vis({ lat: (c.n + c.s) / 2, lon: (c.w + c.e) / 2 })));
+    const navLabels = (aviation.navaids || []).filter((n) => !/ILS/i.test(n.type)).map((n) => ({ lat: n.lat - 0.06, lon: n.lon + 0.08, angle: 0, kind: 'box', color: '#1d3f8f', lines: navaidLabel(n).lines }));
+    drawLabels(g, navLabels.concat(aviation.labels).filter((l) => vis(l) && (l.kind !== 'edge' || l.edgePx10 * 2 ** (z - 10) * 2 > l.text.length * 13)), PP, k * 0.9, aviation.ama.filter((c) => vis({ lat: (c.n + c.s) / 2, lon: (c.w + c.e) / 2 })));
   }
 
   const latC = (box.n + box.s) / 2;

@@ -125,7 +125,7 @@ jobs:
       - name: Build AIP data (ENAIRE aerodromes, VRPs, VFR routes)
         if: steps.aip.outputs.cache-hit != 'true'
         continue-on-error: true
-        run: mkdir -p aip-tmp && python3 tools/build-aip.py aip-tmp/aip.json && mkdir -p aipdata && mv aip-tmp/aip.json aipdata/
+        run: mkdir -p aip-tmp && python3 tools/build-aip.py aip-tmp/aip.json && mkdir -p aipdata && mv aip-tmp/aip.json aipdata/ && (mv aip-tmp/obstacles.json aipdata/ || true)
 
       - name: Assemble site
         run: |
@@ -133,6 +133,7 @@ jobs:
           cp -r index.html styles.css manifest.webmanifest sw.js js vendor assets icons _site/
           if [ -f data/places.json ]; then cp data/places.json _site/data/; else echo '[]' > _site/data/places.json; fi
           if [ -f aipdata/aip.json ]; then cp aipdata/aip.json _site/data/; else echo '{}' > _site/data/aip.json; fi
+          if [ -f aipdata/obstacles.json ]; then cp aipdata/obstacles.json _site/data/; fi
           cp -r tiles _site/tiles
           if [ -d chart ]; then cp -r chart _site/chart; fi
           touch _site/.nojekyll

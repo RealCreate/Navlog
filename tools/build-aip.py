@@ -217,7 +217,41 @@ except SystemExit as e:
     print(f"AMA layer unavailable: {e}", file=sys.stderr)
 print(f"{len(ama)} AMA cells", file=sys.stderr)
 
-json.dump({"source": BASE, "built": time.strftime("%Y-%m-%d"), "aerodromes": ads, "vrps": vrps, "routes": routes, "airspaces": airspaces, "ama": ama},
+# Radio navigation aids (VOR, DVOR/DME, NDB…) — drawn as compass roses / symbols on the own chart.
+navaids = []
+try:
+    for f in query(27):
+        a, g = f["attributes"], f.get("geometry") or {}
+        if g.get("x") is None or not in_range(g["y"], g["x"]):
+            continue
+        navaids.append({"id": (a.get("IDENT_TXT") or "").strip(), "name": (a.get("NAME_TXT") or "").strip().title(),
+                        "type": (a.get("TIPO") or "").strip(), "freq": a.get("FREQUENCY_VAL"), "unit": a.get("FREQUENCY_UOM"),
+                        "lat": round(g["y"], 5), "lon": round(g["x"], 5)})
+except SystemExit as e:
+    print(f"navaids unavailable: {e}", file=sys.stderr)
+print(f"{len(navaids)} navaids", file=sys.stderr)
+
+# Obstacles (ENAIRE eTOD): top elevation ft AMSL, height ft, type, lit — written to obstacles.json
+# next to aip.json (loaded by the app for the chart, the profile and the minimum-altitude check).
+TYPES = {"Windmill": "w", "Wind turbine": "w", "Antenna": "a", "Tower": "t", "Control Tower": "t", "Mast": "a", "Chimney": "c", "Building": "b", "Pole": "p", "Crane": "k", "Catenary": "l"}
+obstacles = []
+try:
+    for f in query(43, fields="ELEVATION_FT,VERTICALEXTENT,UNIT,TYPE,LIGHTED", extra={"geometryPrecision": 5}):
+        a, g = f["attributes"], f.get("geometry") or {}
+        if g.get("x") is None or a.get("ELEVATION_FT") is None or not in_range(g["y"], g["x"]):
+            continue
+        h = a.get("VERTICALEXTENT")
+        hft = round(h * 3.28084) if h is not None and (a.get("UNIT") or "m").lower().startswith("m") else (round(h) if h is not None else None)
+        obstacles.append([round(g["y"], 5), round(g["x"], 5), round(a["ELEVATION_FT"]), hft, TYPES.get((a.get("TYPE") or "").strip(), "o"), 1 if a.get("LIGHTED") else 0])
+except SystemExit as e:
+    print(f"obstacles unavailable: {e}", file=sys.stderr)
+print(f"{len(obstacles)} obstacles", file=sys.stderr)
+import os
+if obstacles:
+    json.dump({"built": time.strftime("%Y-%m-%d"), "fields": ["lat", "lon", "topFt", "heightFt", "type", "lit"], "obstacles": obstacles},
+              open(os.path.join(os.path.dirname(OUT) or ".", "obstacles.json"), "w"), separators=(",", ":"))
+
+json.dump({"source": BASE, "built": time.strftime("%Y-%m-%d"), "aerodromes": ads, "vrps": vrps, "routes": routes, "airspaces": airspaces, "ama": ama, "navaids": navaids},
           open(OUT, "w", encoding="utf-8"), ensure_ascii=False, separators=(",", ":"))
 print(f"wrote {OUT}")
 if len(ads) < 5:

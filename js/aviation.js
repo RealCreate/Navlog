@@ -225,3 +225,105 @@ export function drawLabels(ctx, labels, P, k = 1, ama = []) {
   }
   ctx.restore();
 }
+
+/* ---------------- Navaids (Rogers-style VOR compass roses) ---------------- */
+const VOR_TYPES = /VOR/i;
+export function navaidLabel(n) {
+  const t = n.type.replace('DVORDME', 'DVOR/DME').replace('VORDME', 'VOR/DME').replace('ILS_DME', 'ILS/DME');
+  const f = n.freq != null ? String(n.freq.toFixed(n.unit === 'kHz' ? 0 : 2)).replace('.', ',') : '';
+  return { lines: [t, `${n.name} ${f} ${n.id}`] };
+}
+/** Compass roses for VORs (oriented to magnetic north, var east-positive) and NDB symbols. */
+export function drawNavaids(ctx, navaids, P, z, k = 1, varAt = () => 0) {
+  if (z < 8) return;
+  ctx.save();
+  ctx.strokeStyle = NAVY; ctx.fillStyle = NAVY;
+  for (const n of navaids || []) {
+    if (/ILS/i.test(n.type)) continue;
+    const [cx, cy] = P(n.lat, n.lon);
+    if (VOR_TYPES.test(n.type)) {
+      // rose radius 6 NM
+      const [ex] = P(n.lat, n.lon + 6 / (60 * Math.cos((n.lat * Math.PI) / 180)));
+      const r = Math.abs(ex - cx);
+      ctx.lineWidth = 1 * k;
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+      const rot = ((varAt(n.lat, n.lon) || 0) * Math.PI) / 180; // magnetic north = true north + var E
+      ctx.font = `700 ${Math.max(8, Math.min(12, r / 7)) * (k > 1 ? k : 1)}px Helvetica, Arial, sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      for (let d = 0; d < 360; d += 5) {
+        const a = (d * Math.PI) / 180 + rot;
+        const len = d % 30 === 0 ? r * 0.12 : d % 10 === 0 ? r * 0.08 : r * 0.04;
+        const sx = cx + Math.sin(a) * r, sy = cy - Math.cos(a) * r;
+        ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(cx + Math.sin(a) * (r - len), cy - Math.cos(a) * (r - len)); ctx.stroke();
+        if (d % 30 === 0 && z >= 9 && r > 40) {
+          ctx.save(); ctx.translate(cx + Math.sin(a) * (r - len - 9 * k), cy - Math.cos(a) * (r - len - 9 * k)); ctx.rotate(a);
+          ctx.fillText(String(d / 10), 0, 0); ctx.restore();
+        }
+      }
+      // north arrow
+      const a0 = rot;
+      ctx.beginPath(); ctx.moveTo(cx + Math.sin(a0) * (r + 9 * k), cy - Math.cos(a0) * (r + 9 * k));
+      ctx.lineTo(cx + Math.sin(a0 - 0.05) * r, cy - Math.cos(a0 - 0.05) * r); ctx.lineTo(cx + Math.sin(a0 + 0.05) * r, cy - Math.cos(a0 + 0.05) * r); ctx.closePath(); ctx.fill();
+      // VOR hexagon (+ DME square)
+      const h = 6 * k;
+      ctx.lineWidth = 1.6 * k; ctx.beginPath();
+      for (let i = 0; i < 6; i++) { const t = (i * Math.PI) / 3; const x = cx + Math.cos(t) * h, y = cy + Math.sin(t) * h; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+      ctx.closePath(); ctx.stroke();
+      if (/DME/i.test(n.type)) ctx.strokeRect(cx - h * 1.25, cy - h * 1.1, h * 2.5, h * 2.2);
+      ctx.beginPath(); ctx.arc(cx, cy, 1.5 * k, 0, Math.PI * 2); ctx.fill();
+    } else if (/NDB/i.test(n.type)) {
+      ctx.fillStyle = 'rgba(29,63,143,0.85)';
+      for (let ring = 1; ring <= 3; ring++) for (let i = 0; i < 12 + ring * 4; i++) {
+        const t = (i / (12 + ring * 4)) * Math.PI * 2; ctx.beginPath(); ctx.arc(cx + Math.cos(t) * ring * 3.5 * k, cy + Math.sin(t) * ring * 3.5 * k, 0.9 * k, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.beginPath(); ctx.arc(cx, cy, 2 * k, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+/* ---------------- Obstacles (ENAIRE eTOD, ≥ 100 m) ---------------- */
+/** obstacles: [[lat, lon, topFt, heightFt, type, lit]] */
+export function drawObstacles(ctx, obstacles, P, z, k = 1, view = null, tileW = Infinity) {
+  if (z < 9) return;
+  ctx.save();
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  const s = (z >= 11 ? 1.2 : 0.75) * k;
+  const labelled = [];
+  for (const o of obstacles || []) {
+    const [la, lo, top, , type, lit] = o;
+    if (view && (lo < view.w || lo > view.e || la < view.s || la > view.n)) continue;
+    const [x, y] = P(la, lo);
+    if (z < 10) { // overview: just a small mark per obstacle (wind farms read as dotted clusters)
+      ctx.fillStyle = 'rgba(27,27,27,0.75)'; ctx.beginPath(); ctx.arc(x, y, 1.6 * k, 0, Math.PI * 2); ctx.fill();
+      continue;
+    }
+    ctx.strokeStyle = '#1b1b1b'; ctx.fillStyle = '#1b1b1b'; ctx.lineWidth = (z >= 11 ? 1.4 : 1.1) * s;
+    if (type === 'w') {
+      // wind turbine: mast + three blades
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y - 9 * s); ctx.stroke();
+      for (let i = 0; i < 3; i++) { const a = (i * 2 * Math.PI) / 3 - Math.PI / 2; ctx.beginPath(); ctx.moveTo(x, y - 9 * s); ctx.lineTo(x + Math.cos(a) * 5 * s, y - 9 * s + Math.sin(a) * 5 * s); ctx.stroke(); }
+    } else {
+      // obstacle: inverted V with a dot
+      ctx.beginPath(); ctx.moveTo(x - 4.5 * s, y); ctx.lineTo(x, y - 11 * s); ctx.lineTo(x + 4.5 * s, y); ctx.stroke();
+      ctx.beginPath(); ctx.arc(x, y - 1.5 * s, 1.3 * s, 0, Math.PI * 2); ctx.fill();
+    }
+    if (lit && z >= 11) {
+      ctx.strokeStyle = '#d4a000'; ctx.lineWidth = 1 * s;
+      for (const a of [-0.6, 0, 0.6]) { const b = a - Math.PI / 2; ctx.beginPath(); ctx.moveTo(x + Math.cos(b) * 12 * s, y - 9 * s + Math.sin(b) * 6 * s); ctx.lineTo(x + Math.cos(b) * 16 * s, y - 9 * s + Math.sin(b) * 9 * s); ctx.stroke(); }
+    }
+    // top elevation (ft AMSL) for the highest obstacle of each group, at higher zooms
+    if (z >= 11 && !labelled.some(([lx, ly, lt]) => Math.hypot(lx - x, ly - y) < 60 * k && lt >= top)) {
+      for (let i = labelled.length - 1; i >= 0; i--) if (Math.hypot(labelled[i][0] - x, labelled[i][1] - y) < 60 * k) labelled.splice(i, 1);
+      labelled.push([x, y, top]);
+    }
+  }
+  ctx.font = `700 ${10 * k}px Helvetica, Arial, sans-serif`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  for (const [x, y, top] of labelled) {
+    const t = String(top), w = ctx.measureText(t).width;
+    if (x + 8 * k + w > tileW) continue; // would be cut at the tile edge
+    ctx.lineWidth = 3 * k; ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.strokeText(t, x + 7 * k, y - 4 * k);
+    ctx.fillStyle = '#1b1b1b'; ctx.fillText(t, x + 7 * k, y - 4 * k);
+  }
+  ctx.restore();
+}
