@@ -1,5 +1,5 @@
 import json, urllib.request, urllib.parse, sys, os
-BASE = "https://servais.enaire.es/insignia/rest/services/INSIGNIA_SRV/Aero_SRV_VIGOR_V2/FeatureServer"
+BASE = "https://servais.enaire.es/insignia/rest/services/INSIGNIA_SRV/Aero_SRV_VIGOR_Sectores_V1/FeatureServer"
 out = sys.argv[1]; os.makedirs(out, exist_ok=True)
 def get(u):
     return json.loads(urllib.request.urlopen(u, timeout=120).read())

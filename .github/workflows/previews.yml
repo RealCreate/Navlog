@@ -21,7 +21,7 @@ jobs:
       - name: Probe
         run: |
           mkdir -p out
-          python3 src/tools/probe-services.py out 2>&1 | tee out/log.txt
+          python3 src/tools/probe-sectors.py out 2>&1 | tee out/log.txt
       - name: Publish to previews branch
         run: |
           cd out
