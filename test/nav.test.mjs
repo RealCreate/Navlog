@@ -111,3 +111,17 @@ test('Standard times only at aerodrome endpoints', () => {
   assert.deepEqual(stdFlags({ stdDep: true, stdArr: true, waypoints: [lebg, town] }), { dep: true, arr: false });
   assert.deepEqual(stdFlags({ stdDep: true, stdArr: true, waypoints: [town, lebg] }), { dep: false, arr: true });
 });
+
+test('LEVD joins via N-1 / S-1 at the VAC heights; LELN via S-1 from S and SE; LEVT direct', () => {
+  assert.deepEqual(procedureFor('LEVD', 'W', 'arr').points, ['W', 'N-1']);
+  assert.equal(procedureFor('LEVD', 'W', 'arr').alt, 4200);
+  assert.deepEqual(procedureFor('LEVD', 'E', 'arr').points, ['E', 'S-1']);
+  assert.equal(procedureFor('LEVD', 'E', 'arr').alt, 3700);
+  assert.deepEqual(procedureFor('LEVD', 'S', 'dep').points, ['S-1', 'S']);
+  assert.match(procedureFor('LEVD', 'NE', 'arr').source, /not used/);
+  assert.deepEqual(procedureFor('LELN', 'SE', 'arr').points, ['SE', 'S-1']);
+  assert.deepEqual(procedureFor('LELN', 'N', 'arr').points, ['N']);
+  assert.deepEqual(procedureFor('LELN', 'S', 'dep').points, ['S']);
+  assert.deepEqual(procedureFor('LEVT', 'E', 'arr').points, ['E']);
+  assert.equal(procedureFor('LEVT', 'E', 'arr').alt, 2600);
+});

@@ -43,6 +43,35 @@ export const AERODROMES = [
     ],
   },
   {
+    icao: 'LEVD', name: 'Valladolid/Villanubla', lat: 41.706, lon: -4.851861,
+    elev: 2775, var: -1, freq: 'LEVD:122.205',
+    freqNote: 'Valladolid TWR / APP 122.205',
+    vac: 'https://aip.enaire.es/AIP/contenido_AIP/AD/AD2/LEVD/LE_AD_2_LEVD_VAC_1_en.pdf',
+    ad2: 'https://aip.enaire.es/AIP/contenido_AIP/AD/AD2/LEVD/LE_AD_2_LEVD_en.pdf',
+    vrps: [
+      { id: 'N', name: 'Becilla', ...pt('420551N', '0051229W') },
+      { id: 'NE', name: 'Quintana del Puente', ...pt('420500N', '0041236W') },
+      { id: 'E', name: 'Peñafiel', ...pt('413605N', '0040706W') },
+      { id: 'S', name: 'Olmedo', ...pt('411824N', '0044150W') },
+      { id: 'W', name: 'San Cebrián de Mazote', ...pt('414051N', '0050849W') },
+      { id: 'N-1', name: 'La Mudarra', ...pt('414725N', '0045641W') },
+      { id: 'S-1', name: 'Zaratán', ...pt('413947N', '0044711W') },
+    ],
+  },
+  {
+    icao: 'LELN', name: 'León', lat: 42.588594, lon: -5.656179,
+    elev: 3006, var: -1, freq: 'LELN:122.105',
+    freqNote: 'León TWR 122.105 · APP 121.280',
+    vac: 'https://aip.enaire.es/AIP/contenido_AIP/AD/AD2/LELN/LE_AD_2_LELN_VAC_1_en.pdf',
+    ad2: 'https://aip.enaire.es/AIP/contenido_AIP/AD/AD2/LELN/LE_AD_2_LELN_en.pdf',
+    vrps: [
+      { id: 'N', name: 'La Robla', ...pt('424809N', '0053743W') },
+      { id: 'SE', name: 'Santas Martas', ...pt('422740N', '0052305W') },
+      { id: 'S', name: 'Palazuelo', ...pt('420911N', '0053845W') },
+      { id: 'S-1', name: 'Onzonilla', ...pt('423134N', '0053432W') },
+    ],
+  },
+  {
     icao: 'LERJ', name: 'Logroño/Agoncillo', ...pt('422738N', '0021914W'),
     elev: 1156, var: 0, freq: 'LERJ:118.580',
     freqNote: 'Rioja TWR 118.580 · GMC 121.705',
@@ -221,6 +250,30 @@ export const PROCEDURES = {
     altByRoute: { S: { dep: 5000, arr: 5500 } },
     source: 'LERJ VAC: corridors 4500 ft arriving / 4000 ft departing (South 5500 / 5000)',
   },
+  // LEVT VAC 1.1 (WEF 25-DEC-25): N, E, S, W direct, 1000 ft AGL MAX (elev 1682 ft → 2600 ft).
+  LEVT: {
+    routes: { N: ['N'], E: ['E'], S: ['S'], W: ['W'] },
+    alt: { dep: 2600, arr: 2600 },
+    source: 'LEVT VAC: 1000 ft AGL max in the corridors (2682 ft); contact TWR over the point',
+  },
+  // LEVD VAC 1.3: arrivals from N, W, NE via N-1 (La Mudarra), from S, E via S-1 (Zaratán);
+  // departures leave the ATZ via N-1 or S-1. 1000 ft AGL via E and S (3700 ft), 1500 ft AGL via
+  // W, N and NE (4200 ft). Do not use NE (Phase 3 and solo manuals).
+  LEVD: {
+    routes: { N: ['N-1', 'N'], W: ['N-1', 'W'], NE: ['N-1', 'NE'], S: ['S-1', 'S'], E: ['S-1', 'E'] },
+    alt: { dep: 3700, arr: 3700 },
+    altByRoute: { N: { dep: 4200, arr: 4200 }, W: { dep: 4200, arr: 4200 }, NE: { dep: 4200, arr: 4200 } },
+    source: 'LEVD VAC: 1000 ft AGL via E/S, 1500 ft AGL via W/N/NE; join via N-1 or S-1. NE point not used (SOP)',
+    avoid: ['NE'],
+  },
+  // LELN VAC 1.2: from S (Palazuelo) or SE (Santas Martas) via S-1 (Onzonilla) at 1000 ft AGL
+  // (4000 ft); from N (La Robla) direct to the circuit. Departures: report the exit point to TWR.
+  LELN: {
+    routes: { N: ['N'], S: ['S-1', 'S'], SE: ['S-1', 'SE'] },
+    depRoutes: { N: ['N'], S: ['S'], SE: ['SE'] },
+    alt: { dep: 4000, arr: 4000 },
+    source: 'LELN VAC: circuit at 1000 ft AGL, S and SE join via S-1; with LED7 active only S or SE. Full-stop landing (solo manual)',
+  },
 };
 
 /**
@@ -239,7 +292,7 @@ export function procedureFor(adIcao, vrpId, kind) {
       const [name, all] = route;
       const pts = all.slice(0, all.indexOf(vrpId) + 1);
       const alt = (p.altByRoute && p.altByRoute[name] ? p.altByRoute[name] : p.alt)[kind];
-      return { points: kind === 'dep' ? pts : [...pts].reverse(), alt, route: name, source: p.source, solo: p.soloEntry };
+      return { points: kind === 'dep' ? pts : [...pts].reverse(), alt, route: name, source: (p.avoid || []).includes(vrpId) ? `${vrpId} is not used (SOP) — ${p.source}` : p.source, solo: p.soloEntry };
     }
     if (ad && ad.vrps.some((x) => x.id === vrpId)) return { points: [vrpId], alt: p.alt[kind], source: p.source, solo: p.soloEntry };
   }

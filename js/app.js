@@ -283,7 +283,7 @@ function refName(p) {
 // Magnetic variation for a free point: from the nearest hand-checked VAC value (LEBG, LEVT, LERJ),
 // otherwise the nearest aerodrome's AIP value.
 function defaultVar(lat, lon) {
-  const curated = AERODROMES.filter((a) => a.freq && a.vrps && ['LEBG', 'LEVT', 'LERJ'].includes(a.icao));
+  const curated = AERODROMES.filter((a) => a.freq && a.vrps && ['LEBG', 'LEVT', 'LERJ', 'LEVD', 'LELN'].includes(a.icao));
   let best = null, bd = Infinity;
   for (const a of curated) { const d = distanceNm(a, { lat, lon }); if (d < bd) { bd = d; best = a; } }
   if (best && bd < 60) return best.var;
