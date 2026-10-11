@@ -1,0 +1,66 @@
+/api/avisos_cap/ultimoelaborado/area/{area} | Avisos de Fenómenos Meteorológicos Adversos. Último.
+/api/avisos_cap/archivo/fechaini/{fechaIniStr}/fechafin/{fechaFinStr} | Avisos de Fenómenos Meteorológicos Adversos. Archivo.
+/api/incendios/mapasriesgo/estimado/area/{area} | Mapa de niveles de riesgo estimado meteorológico de incendios forestales.
+/api/incendios/mapasriesgo/previsto/dia/{dia}/area/{area} | Mapa de niveles de riesgo previsto meteorológico de incendios forestales.
+/api/maestro/municipio/{municipio} | Información específica municipio.
+/api/maestro/municipios | Información específica municipios. Todos.
+/api/mapasygraficos/analisis | Mapas de análisis. Última pasada.
+/api/mapasygraficos/mapassignificativos/fecha/{fecha}/{ambito}/{dia} | Mapas significativos. Tiempo actual.
+/api/observacion/convencional/todas | Datos de observación. Tiempo actual. Todas.
+/api/observacion/convencional/datos/estacion/{idema} | Datos de observación. Tiempo actual.
+/api/observacion/convencional/mensajes/tipomensaje/{tipomensaje} | Mensajes de observación. Último elaborado.
+/api/prediccion/ccaa/hoy/{ccaa} | Predicción CCAA hoy. Tiempo actual.
+/api/prediccion/ccaa/hoy/{ccaa}/elaboracion/{fecha} | Predicción CCAA hoy. Archivo.
+/api/prediccion/ccaa/manana/{ccaa} | Predicción CCAA mañana. Tiempo actual.
+/api/prediccion/ccaa/manana/{ccaa}/elaboracion/{fecha} | Predicción CCAA mañana. Archivo.
+/api/prediccion/ccaa/medioplazo/{ccaa} | Predicción CCAA medio plazo. Tiempo actual.
+/api/prediccion/ccaa/medioplazo/{ccaa}/elaboracion/{fecha} | Predicción CCAA medio plazo. Archivo.
+/api/prediccion/ccaa/pasadomanana/{ccaa} | Predicción CCAA pasado mañana. Tiempo actual.
+/api/prediccion/ccaa/pasadomanana/{ccaa}/elaboracion/{fecha} | Predicción CCAA pasado mañana. Archivo.
+/api/prediccion/especifica/montaña/pasada/area/{area} | Predicción de montaña. Tiempo pasado.
+/api/prediccion/especifica/montaña/pasada/area/{area}/dia/{dia} | Predicción de montaña. Tiempo actual.
+/api/prediccion/especifica/nivologica/{area} | Información nivológica.
+/api/prediccion/especifica/municipio/diaria/{municipio} | Predicción por municipios diaria. Tiempo actual.
+/api/prediccion/especifica/municipio/diaria/todos | Predicción por municipios diaria. Tiempo actual. Todos. (NUEVO)
+/api/prediccion/especifica/municipio/horaria/{municipio} | Predicción por municipios horaria. Tiempo actual.
+/api/prediccion/especifica/municipio/horaria/todos | Predicción por municipios horaria. Tiempo actual. Todos. (NUEVO)
+/api/prediccion/especifica/playa/{playa} | Predicción para las playas. Tiempo actual.
+/api/prediccion/especifica/uvi/{dia} | Predicción de radiación ultravioleta (UVI).
+/api/prediccion/maritima/altamar/area/{area} | Predicción marítima de alta mar.
+/api/prediccion/maritima/costera/costa/{costa} | Predicción marítima costera.
+/api/prediccion/nacional/hoy | Predicción nacional hoy. Última elaborada.
+/api/prediccion/nacional/hoy/elaboracion/{fecha} | Predicción nacional hoy. Archivo.
+/api/prediccion/nacional/manana | Predicción nacional mañana. Tiempo actual.
+/api/prediccion/nacional/manana/elaboracion/{fecha} | Predicción nacional mañana. Archivo.
+/api/prediccion/nacional/medioplazo | Predicción nacional medio plazo. Tiempo actual.
+/api/prediccion/nacional/medioplazo/elaboracion/{fecha} | Predicción nacional medio plazo. Archivo.
+/api/prediccion/nacional/pasadomanana | Predicción nacional pasado mañana. Tiempo actual.
+/api/prediccion/nacional/pasadomanana/elaboracion/{fecha} | Predicción nacional pasado mañana. Archivo.
+/api/prediccion/nacional/tendencia | Predicción nacional tendencia. Tiempo actual.
+/api/prediccion/nacional/tendencia/elaboracion/{fecha} | Predicción nacional tendencia. Archivo.
+/api/prediccion/provincia/hoy/{provincia} | Predicción provincial e insular hoy. Tiempo actual.
+/api/prediccion/provincia/hoy/{provincia}/elaboracion/{fecha} | Predicción provincial e insular hoy. Archivo.
+/api/prediccion/provincia/manana/{provincia} | Predicción provincial e insular mañana. Tiempo actual.
+/api/prediccion/provincia/manana/{provincia}/elaboracion/{fecha} | Predicción provincial e insular mañana. Archivo.
+/api/productos/climatologicos/balancehidrico/{anio}/{decena} | Balance hídrico nacional (documento).
+/api/productos/climatologicos/resumenclimatologico/nacional/{anio}/{mes} | Resumen mensual climatológico nacional (documento).
+/api/productos/climatologicos/capasshape/{tipoestacion} | Capas SHAPE de estaciones climatológicas de Aemet.
+/api/red/especial/contaminacionfondo/estacion/{nombre_estacion} | Datos de contaminación de fondo. Tiempo actual.
+/api/red/especial/ozono | Contenido total de ozono. Tiempo actual.
+/api/red/especial/perfilozono/estacion/{estacion} | Perfiles verticales de ozono. Tiempo actual.
+/api/red/especial/radiacion | Datos de radiación global, directa o difusa. Tiempo actual.
+/api/red/radar/nacional | Imagen composición nacional radares. Tiempo actual estándar.
+/api/red/radar/regional/{radar} | Imagen gráfica radar regional. Tiempo actual estándar.
+/api/red/rayos/mapa | Mapa con los rayos registrados en periodo standard. Último elaborado.
+/api/satelites/producto/nvdi | Índice normalizado de vegetación.
+/api/satelites/producto/sst | Temperatura del agua del mar.
+/api/valores/climatologicos/diarios/datos/fechaini/{fechaIniStr}/fechafin/{fechaFinStr}/estacion/{idema} | Climatologías diarias.
+/api/valores/climatologicos/diarios/datos/fechaini/{fechaIniStr}/fechafin/{fechaFinStr}/todasestaciones | Climatologías diarias. Todas.
+/api/valores/climatologicos/inventarioestaciones/estaciones/{estaciones} | Estaciones por indicativo.
+/api/valores/climatologicos/inventarioestaciones/todasestaciones | Inventario de estaciones (valores climatológicos).
+/api/valores/climatologicos/mensualesanuales/datos/anioini/{anioIniStr}/aniofin/{anioFinStr}/estacion/{idema} | Climatologías mensuales anuales.
+/api/valores/climatologicos/normales/estacion/{idema} | Climatologías normales (1991-2020).
+/api/valores/climatologicos/valoresextremos/parametro/{parametro}/estacion/{idema} | Valores extremos.
+/api/antartida/datos/fechaini/{fechaIniStr}/fechafin/{fechaFinStr}/estacion/{identificacion} | Datos Antártida.
+https://ama.aemet.es/ 000
+https://ama.aemet.es/o/estaticos/bbdd/imagenes/ 000
