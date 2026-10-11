@@ -374,3 +374,4 @@ table.mbt tr.total.bad td:not(.wpt) { color: var(--bad); }
 .snap-ring { position: absolute; width: 26px; height: 26px; margin: -13px 0 0 -13px; border-radius: 50%; border: 2.5px solid #34c759; background: rgba(52,199,89,0.15); }
 .snap-label { position: absolute; transform: translate(16px, -50%); background: #34c759; color: #fff; font: 700 11px/1 var(--font); padding: 3px 6px; border-radius: 5px; white-space: nowrap; }
 .wx.active { box-shadow: inset 3px 0 0 var(--tint); }
+.field span { overflow-wrap: anywhere; }

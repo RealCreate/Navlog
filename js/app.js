@@ -1969,14 +1969,14 @@ function missionFormHtml(replace) {
       <label class="field narrow"><span>Base</span><select id="msBase">${['LEBG', 'LERJ'].map((x) => `<option>${x}</option>`).join('')}</select></label>
     </div>
     <div class="row wrap" id="msXc" hidden>
-      <label class="field narrow"><span>Destination</span><select id="msDest">${opts('LEVT')}</select></label>
-      <label class="field narrow"><span>Reserve airport</span><select id="msRes">${opts('LEVD')}</select></label>
+      <label class="field"><span>Destination</span><select id="msDest">${opts('LEVT')}</select></label>
+      <label class="field"><span>Reserve</span><select id="msRes">${opts('LEVD')}</select></label>
     </div>
     <div class="row wrap" id="msTri" hidden>
-      <label class="field narrow"><span>Trip A · 1st</span><select id="msA1">${opts('LEVD')}</select></label>
-      <label class="field narrow"><span>Trip A · 2nd</span><select id="msA2">${opts('LELN')}</select></label>
-      <label class="field narrow"><span>Trip B · 1st</span><select id="msB1">${opts('LEVT')}</select></label>
-      <label class="field narrow"><span>Trip B · 2nd</span><select id="msB2">${opts('LEPP')}</select></label>
+      <label class="field"><span>Trip A · 1st</span><select id="msA1">${opts('LEVD')}</select></label>
+      <label class="field"><span>Trip A · 2nd</span><select id="msA2">${opts('LELN')}</select></label>
+      <label class="field"><span>Trip B · 1st</span><select id="msB1">${opts('LEVT')}</select></label>
+      <label class="field"><span>Trip B · 2nd</span><select id="msB2">${opts('LEPP')}</select></label>
     </div>
     <div class="row"><span class="grow label">Local: 2 navlogs + a shared alternate, 1 M&amp;B. Cross-country: 2 flights + 2 for the reserve airport = 4 navlogs, 1 M&amp;B per flight, no refuel. Triangular: two different trips, two airports + base, 300 NM each (solo manual).</span></div>
     <button class="btn primary wide" data-act="msCreate">${replace ? 'Replace the mission' : 'Create mission'}</button>`;

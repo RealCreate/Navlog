@@ -39,6 +39,8 @@ const FORMS = {
   },
   PS28: {
     file: 'assets/mb/PS28.pdf', size: 8.5, thousands: true,
+    // load sheet & balance chart (page 2, printed rotated): weight 400–600 kg across, C.G. 28–35 % MAC down
+    chart: { page: 1, x: 'mass', y: 'pct', xs: [400, 43.8, 600, 185.8], ys: [30, 295.8, 35, 538.8] },
     header: { page: 0, reg: [322, 378, 462, 478], date: [322, 378, 503, 519], student: [322, 378, 523, 539] },
     table: {
       page: 0, w: [140, 200], a: [225, 282], m: [298, 380],
@@ -207,7 +209,7 @@ export async function buildMbFormPdf(m, meta, plan) {
   // envelope chart: take-off (filled) and landing (ring) points
   if (form.chart) {
     const ch = form.chart, cp = pages[ch.page], CH = topOf(cp);
-    const val = (axis, pt) => (axis === 'mass' ? pt.mass : axis === 'arm' ? pt.arm : pt.moment / (ch.div || 1));
+    const val = (axis, pt) => (axis === 'mass' ? pt.mass : axis === 'arm' ? pt.arm : axis === 'pct' ? m.pct(pt.arm) : pt.moment / (ch.div || 1));
     const at = (pt) => ({ x: lin(ch.xs, val(ch.x, pt)), y: CH - lin(ch.ys, val(ch.y, pt)) });
     const a = at(m.to), b = at(m.ldg);
     cp.drawLine({ start: a, end: b, thickness: 1.2, color: blue });

@@ -77,41 +77,35 @@ export async function fonts(doc) {
  */
 export function addBriefingPages(doc, F, B, meta) {
   const W = new Writer(doc, F, meta.title);
-  const lvl = (l) => (l === 'bad' ? W.red : l === 'warn' ? W.amber : W.grey);
+  const lvl = (l) => (l === 'bad' ? W.red : W.amber);
   W.para(meta.flightLine, { size: 10, font: F.bold });
 
-  // Go / no-go
-  const bad = B.issues.filter((i) => i.level === 'bad').length, warn = B.issues.filter((i) => i.level === 'warn').length;
-  W.sub('Go / no-go', bad ? `${bad} NO-GO` : 'NO BLOCKERS FOUND', bad ? W.red : W.green);
-  if (!B.issues.length) W.para('No issues found. The final decision stays with the PIC and the instructor.', { color: W.grey });
-  for (const i of B.issues) W.para(`${i.level === 'bad' ? 'X' : i.level === 'warn' ? '!' : 'i'}  ${i.text}`, { color: lvl(i.level), x: M + 8, gap: 1 });
-  if (warn) W.y += 4;
+  // Go / no-go: only what needs attention
+  const top = B.issues.filter((i) => i.level !== 'info');
+  const bad = top.filter((i) => i.level === 'bad').length;
+  W.sub('Go / no-go', bad ? `${bad} NO-GO` : 'NO BLOCKERS', bad ? W.red : W.green);
+  for (const i of top) W.para(`${i.level === 'bad' ? 'X' : '!'}  ${i.text}`, { size: 9, color: lvl(i.level), x: M + 8, gap: 0 });
+  W.y += 4;
 
-  // 1. Weather
-  W.heading('1 · Weather (METAR / TAF)');
-  if (!B.wx.length) W.para('No aerodromes planned.', { color: W.grey });
-  for (const { ad, t, role, w, a, st } of B.wx) {
-    W.sub(`${ad.icao} ${ad.name || ''} · ${role} · ${meta.zl(t)} ±1 h`, st[1], st[0] === 'bad' ? W.red : st[0] === 'warn' ? W.amber : st[0] === 'ok' ? W.green : W.grey);
-    if (w.metar) { W.para(meta.metarSummary(w.metar) + (a.xw ? ` · best RWY ${a.xw.rwy}: crosswind ${a.xw.xw} kt` : ''), { size: 9, color: W.grey, x: M + 8, gap: 1 }); W.mono(w.metar.rawOb); } else W.para('No METAR in the briefing data (fetch it in the Briefing tab).', { size: 9, color: W.grey, x: M + 8 });
+  // 1. Weather: status + raw METAR / TAF
+  W.heading('1 · Weather');
+  for (const { ad, role, w, st } of B.wx) {
+    W.sub(`${ad.icao} · ${role}`, st[1], st[0] === 'bad' ? W.red : st[0] === 'warn' ? W.amber : st[0] === 'ok' ? W.green : W.grey);
+    W.mono(w.metar ? w.metar.rawOb : 'METAR —');
     if (w.taf) W.mono(w.taf.rawTAF);
-    for (const i of a.issues) W.para(`${i.level === 'bad' ? 'X' : '!'}  ${i.text}`, { size: 9, color: lvl(i.level), x: M + 8, gap: 1 });
   }
-  W.para(B.limits + ' Also brief the surface pressure chart, SIGWX and wind charts (Windy / AEMET).', { size: 8.5, color: W.grey });
 
   // 2. NOTAMs
   W.heading('2 · NOTAMs');
-  W.row(`Aerodromes to check: ${B.notamAds.join(', ') || '—'} (every alternate individually)`, 'ICARO');
-  W.row('En-route NOTAMs', 'Insignia VFR');
-  W.para(meta.notams ? `Bulletin / relevant NOTAMs: ${meta.notams}` : 'Bulletin code / relevant NOTAMs: ____________________________________________', { x: M + 8 });
+  W.para(`${B.notamAds.join(', ') || '—'} (ICARO) · en-route (Insignia VFR)${meta.notams ? ` · ${meta.notams}` : ' · bulletin: ______________'}`, { x: M + 8 });
 
   // 3. ATC flight plan
-  W.heading('3 · ATC flight plan (draft)');
-  if (B.fpl) { W.mono(B.fpl); W.para('EOBT 10 min before takeoff. Check equipment, endurance and persons on board before filing.', { size: 8.5, color: W.grey }); } else W.para('Plan a route between two aerodromes.', { color: W.grey });
+  W.heading('3 · ATC flight plan');
+  W.mono(B.fpl || '—');
 
-  // 4. Mission objective
-  W.heading('4 · Mission objective');
+  // 4. Mission objective: route, alternate, frequencies
+  W.heading('4 · Route');
   if (meta.rows && meta.rows.length) {
-    W.sub('Route');
     const cols = [['From', 0], ['To', 90], ['ALT', 180], ['MH', 228], ['Dist', 268], ['GS', 310], ['ETE', 345], ['Fuel', 395]];
     W.need(14); cols.forEach(([c, x]) => W.text(c, M + 8 + x, 8.5, F.bold, W.grey)); W.y += 12;
     for (const r of meta.rows) {
@@ -120,53 +114,25 @@ export function addBriefingPages(doc, F, B, meta) {
       cols.forEach(([, x], i) => W.text(String(v[i]).slice(0, i < 2 ? 18 : 10), M + 8 + x, 8.5, F.reg));
       W.y += 11.5;
     }
-    W.para(`Total ${meta.totals}`, { size: 9, font: F.bold, x: M + 8 });
+    W.para(`Total ${meta.totals}${B.alt ? ` · alternate ${B.alt.icao}` : ''}`, { size: 9, font: F.bold, x: M + 8 });
   }
-  W.sub('Departure briefing'); W.para(B.depText || '—', { x: M + 8 });
-  W.sub('Arrival briefing'); W.para(B.arrText || '—', { x: M + 8 });
-  W.sub('Charts to have in sight'); W.para(`${B.chartAds.map((x) => `${x.icao} VAC`).join(' · ') || '—'} · ENAIRE 1:500 000 chart`, { x: M + 8 });
-  W.sub('Frequencies'); W.para(B.freq, { x: M + 8 });
-  if (B.alt) W.row(`Alternate: ${B.alt.icao} ${B.alt.name || ''} (company alternate policy: one FlyBy base among the alternates)`);
+  W.para(`Freq: ${B.freq}`, { size: 9, x: M + 8 });
 
-  // 5. M&B
-  W.heading('5 · Mass & balance');
+  // 5–6. M&B, fuel, performance — one line each
+  W.heading('5 · M&B, fuel · 6 · Performance');
   const m = B.mb;
-  if (m) {
-    const u = m.ac.unit, a = m.ac.armUnit, dp = m.ac.armDp;
-    W.row(`${m.ac.name} · ${m.reg || ''}`, m.ok ? 'IN LIMITS' : 'OUT OF LIMITS', m.ok ? W.green : W.red);
-    W.row(`Take-off mass (max ${m.mtow} ${u})`, `${m.to.mass.toFixed(1)} ${u}`, m.to.massOk ? undefined : W.red);
-    W.row('Take-off C.G.', `${m.to.arm.toFixed(dp)} ${a}`, m.to.cgOk ? undefined : W.red);
-    W.row('Landing mass / C.G.', `${m.ldg.mass.toFixed(1)} ${u} / ${m.ldg.arm.toFixed(dp)} ${a}`, m.ldg.cgOk ? undefined : W.red);
-    for (const i of m.issues) W.para(`X  ${i}`, { size: 9, color: W.red, x: M + 8, gap: 1 });
-    W.para('The filled M&B sheet follows the navlog.', { size: 8.5, color: W.grey });
-  } else W.para('Mass & balance not complete (registration / empty mass missing).', { color: W.red });
-  if (B.fuel) {
-    const p = B.fuel;
-    W.sub('Fuel (SOP fuel calculations)');
-    W.row('Taxi · trip · alternate', `${p.taxi} · ${p.trip.toFixed(1)} · ${p.alternate.toFixed(1)} L`);
-    W.row('Contingency 5 % · final reserve 45 min · extra', `${p.contingency.toFixed(1)} · ${p.finalReserve} · ${p.extra} L`);
-    W.row('Minimum required / on board', `${p.required} / ${p.fob} L`, p.fob >= p.required ? W.green : W.red);
-    for (const c of p.checks) if (!c.ok) W.para(`X  ${c.text}`, { size: 9, color: W.red, x: M + 8, gap: 1 });
-  }
-
-  // 6. Performance
-  W.heading('6 · Performance (take-off & landing)');
-  if (!B.perf.length) W.para('Plan a route from an aerodrome.', { color: W.grey });
+  if (m) W.row(`T/O ${m.to.mass.toFixed(1)} ${m.ac.unit} (max ${m.mtow}) · C.G. ${m.to.arm.toFixed(m.ac.armDp)} ${m.ac.armUnit} · LDG ${m.ldg.mass.toFixed(1)} ${m.ac.unit}`, m.ok ? 'IN LIMITS' : 'OUT', m.ok ? W.green : W.red);
+  else W.row('Mass & balance', 'NOT DONE', W.red);
+  if (B.fuel) { const p = B.fuel; W.row(`Fuel: trip ${p.trip.toFixed(1)} · alternate ${p.alternate.toFixed(1)} · minimum ${p.required} L · on board ${p.fob} L`, p.fob >= p.required ? 'OK' : 'SHORT', p.fob >= p.required ? W.green : W.red); }
   for (const { c, r } of B.perf) {
-    const isTo = c.role === 'dep';
-    W.sub(`${isTo ? 'Take-off' : 'Landing'} · ${c.ad.icao} · PA ${c.pa} ft · OAT ${c.oat} °C · wind ${c.wind >= 0 ? 'head' : 'tail'} ${Math.abs(c.wind)} kt · ${c.surface}`);
-    const ph = !r || r.manual ? null : isTo ? r.to : r.ldg;
-    if (!ph || ph.manual) { W.para((r && (r.manual || ph?.manual)) || 'No table — use the AFM/POH', { color: W.amber, x: M + 8 }); continue; }
-    W.row('Ground roll', `${ph.gr} ${r.unit}`);
-    W.row(isTo ? 'Over 50 ft' : 'From 50 ft', `${ph.d50} ${r.unit}`);
-    W.para(`${r.source}${ph.steps.length ? ' · ' + ph.steps.join(', ') : ''}. Compare with TORA / LDA (AD 2.13).`, { size: 8, color: W.grey, x: M + 8 });
+    const ph = !r || r.manual ? null : c.role === 'dep' ? r.to : r.ldg;
+    const txt = ph && !ph.manual ? `ground roll ${ph.gr} ${r.unit} · 50 ft ${ph.d50} ${r.unit}` : 'read the AFM chart';
+    W.row(`${c.role === 'dep' ? 'T/O' : 'LDG'} ${c.ad.icao} (PA ${c.pa} ft, ${c.oat} °C, wind ${c.wind} kt): ${txt}`);
   }
 
   // 7. TEM
-  W.heading('7 · Threat & error management');
-  for (const t of B.threats) W.para(`${meta.tem && meta.tem[t] ? '[x]' : '[ ]'}  ${t}`, { x: M + 8, gap: 1 });
-  W.y += 6;
-  W.para('Briefing order (SOP): weather, NOTAMs, ATC flight plan, mission objective, mass & balance, performance, TEM.', { size: 8, color: W.grey });
+  W.heading('7 · TEM');
+  for (const t of B.threats) W.para(`•  ${t}`, { size: 9, x: M + 8, gap: 0 });
   return W.n;
 }
 
