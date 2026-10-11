@@ -209,3 +209,17 @@ export function timeSlots(text, t, sun) {
   }
   return found ? { inside } : null;
 }
+
+/** Renders page 1 of a PDF to a canvas (longest side about maxPx). */
+export async function pdfFirstPageCanvas(bytes, maxPx = 2400) {
+  const pdfjs = await import('../vendor/pdfjs/pdf.min.mjs');
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdfjs/pdf.worker.min.mjs', import.meta.url).href;
+  const doc = await pdfjs.getDocument({ data: bytes.slice(0) }).promise;
+  const page = await doc.getPage(1);
+  const v1 = page.getViewport({ scale: 1 });
+  const viewport = page.getViewport({ scale: maxPx / Math.max(v1.width, v1.height) });
+  const c = document.createElement('canvas'); c.width = Math.round(viewport.width); c.height = Math.round(viewport.height);
+  const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+  await page.render({ canvasContext: g, viewport }).promise;
+  return c;
+}

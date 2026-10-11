@@ -4,7 +4,7 @@ import { computeNavlog, stdFlags, fuelPolicy, fmtMMSS, fmtHMS, fmtVar, fmtAlt, p
 import { buildNavlogPdf, buildMbPdf } from './pdf.js';
 import { addBriefingPages, addMissionCover, fonts as pdfFonts, pdfText } from './briefpdf.js';
 import { renderRouteMap, addMapPage } from './mapprint.js';
-import { parseBulletin, pdfLines, notamFlags } from './notam.js';
+import { parseBulletin, pdfLines, notamFlags, pdfFirstPageCanvas } from './notam.js';
 import { sampleTerrain, plannedProfile, drawProfile, profileAt } from './profile.js';
 import { PlacesLayer } from './places.js';
 import { fetchWinds } from './winds.js';
@@ -1604,8 +1604,12 @@ async function loadSurface(force) {
     if (!meta || !meta.datos) throw new Error(meta && meta.descripcion ? meta.descripcion : 'no data');
     const blob = await (await fetch(meta.datos)).blob();
     const bmp = await createImageBitmap(blob); // the map is a GIF: redraw it as PNG for the PDF
-    const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height;
-    c.getContext('2d').drawImage(bmp, 0, 0);
+    // AEMET publishes the analysis lying on its side (portrait image, north to the right): turn it 90° clockwise
+    const turn = bmp.height > bmp.width;
+    const c = document.createElement('canvas'); c.width = turn ? bmp.height : bmp.width; c.height = turn ? bmp.width : bmp.height;
+    const cg = c.getContext('2d');
+    if (turn) { cg.translate(c.width, 0); cg.rotate(Math.PI / 2); }
+    cg.drawImage(bmp, 0, 0);
     const png = await new Promise((res) => c.toBlob(res, 'image/png'));
     if (surface && surface.url) URL.revokeObjectURL(surface.url);
     surface = { at: Date.now(), url: URL.createObjectURL(png), png: new Uint8Array(await png.arrayBuffer()), label: `Surface pressure analysis · AEMET (fetched ${hhmmZ(new Date())})` };
@@ -1621,6 +1625,44 @@ function surfaceHtml() {
   if (!surface) { loadSurface().then(() => { const el = document.getElementById('surfaceBox'); if (el) el.innerHTML = surfaceHtml(); }); return `<div class="label">Loading… · ${link}</div>`; }
   if (surface.error) return `<div class="label">Could not load the AEMET analysis (${esc(surface.error)}) · ${link}</div>`;
   return `<figure class="wxchart"><img alt="Surface pressure analysis" src="${surface.url}"><figcaption>${esc(surface.label)} · ${link}</figcaption></figure>`;
+}
+
+/* ---------------- SIGWX / wind chart added by the student (Briefing List 1B, 1C) ----------------
+ * AEMET's aviation site (ama.aemet.es) cannot always be read by the app, so the student can save the
+ * chart (screenshot, image or PDF) and add it here. Kept on this device as a JPEG; goes into the
+ * briefing PDF in place of the automatic chart. */
+const WXUP_KEY = 'navlog.wxUploads.v1';
+let wxUploads = (() => { try { return JSON.parse(localStorage.getItem(WXUP_KEY)) || {}; } catch { return {}; } })();
+const WXUP_NAME = { sigwx: 'SIGWX', wind: 'Wind chart' };
+async function addWxUpload(kind, file) {
+  try {
+    let src;
+    if (/pdf$/i.test(file.type) || /\.pdf$/i.test(file.name)) src = await pdfFirstPageCanvas(new Uint8Array(await file.arrayBuffer()));
+    else src = await createImageBitmap(file);
+    const k = Math.min(1, 2400 / Math.max(src.width, src.height));
+    const c = document.createElement('canvas'); c.width = Math.round(src.width * k); c.height = Math.round(src.height * k);
+    const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(src, 0, 0, c.width, c.height);
+    const jpg = await new Promise((res) => c.toBlob(res, 'image/jpeg', 0.85));
+    wxUploads[kind] = { name: file.name, added: Date.now(), b64: bytesToB64(new Uint8Array(await jpg.arrayBuffer())) };
+    try { localStorage.setItem(WXUP_KEY, JSON.stringify(wxUploads)); } catch { toast(`${WXUP_NAME[kind]} added, but too big to keep after closing the app`); }
+    toast(`${WXUP_NAME[kind]} added`);
+    update({ rerenderPanels: true });
+  } catch (err) { console.error(err); toast(`Could not read that file: ${err.message || err}`); }
+}
+function removeWxUpload(kind) {
+  delete wxUploads[kind];
+  try { localStorage.setItem(WXUP_KEY, JSON.stringify(wxUploads)); } catch { /* ignore */ }
+  update({ rerenderPanels: true });
+}
+function wxUploadHtml(kind, auto) {
+  const u = wxUploads[kind];
+  const age = u ? Math.round((flightTime().getTime() - u.added) / 3600e3) : 0;
+  const pick = (label, primary) => `<label class="btn small ${primary ? 'primary' : ''}">${label}<input type="file" accept="image/*,application/pdf,.pdf" data-act="wxUp" data-kind="${kind}" hidden></label>`;
+  if (u) {
+    return `<figure class="wxchart"><img alt="${WXUP_NAME[kind]}" src="data:image/jpeg;base64,${u.b64}"><figcaption>${WXUP_NAME[kind]} · added ${zl(new Date(u.added))}${age > 12 ? ` · <b class="warn-text">added ${age} h before departure — check its validity</b>` : ''}</figcaption>
+      <div class="row" style="gap:6px;margin-top:4px">${pick('Replace')}<button class="btn small danger" data-act="wxUpRemove" data-kind="${kind}">Remove</button></div></figure>`;
+  }
+  return `<div>${chartImg(auto)}<div class="row" style="gap:6px;margin-top:4px">${pick(`Add ${WXUP_NAME[kind]}`, true)}<span class="label">image, screenshot or PDF</span></div></div>`;
 }
 
 /* ---------------- ICARO NOTAM bulletin (saved PDF, added by the student) ---------------- */
@@ -1741,7 +1783,8 @@ function renderBriefing() {
   const cruise = parseAlt(result.main.rows.find((r) => r.phase === 'cruise')?.alt) || 5500;
   const ch = aemetCharts(flightTime(), cruise);
   html += `<div class="wx"><div class="wx-head"><b>Surface pressure chart</b><span class="label">AEMET</span></div><div id="surfaceBox">${surfaceHtml()}</div></div>`;
-  html += `<div class="wx"><div class="wx-head"><b>SIGWX and wind chart</b><span class="label">AEMET · for your time</span></div><div class="wxcharts">${chartImg(ch.sigwx)}${chartImg(ch.wind)}</div></div>`;
+  html += `<div class="wx"><div class="wx-head"><b>SIGWX and wind chart</b><span class="label">AEMET · for your time</span></div><div class="wxcharts">${wxUploadHtml('sigwx', ch.sigwx)}${wxUploadHtml('wind', ch.wind)}</div>
+    <div class="label" style="margin-top:6px">If a chart does not load, save it from <a href="https://ama.aemet.es" target="_blank" rel="noopener">AEMET aviation ↗</a> and add it here — it goes into the briefing PDF.</div></div>`;
   html += `</div><p class="note">${esc(B.limits)} Sources: aviationweather.gov, AEMET (charts load from Spain only; check the validity printed on each chart).</p>`;
 
   // 2. NOTAMs
@@ -1860,12 +1903,15 @@ panels.brief.addEventListener('click', (e) => {
   if (e.target.closest('[data-act=toMb]')) document.querySelector('#modes [data-mode=mb]').click();
   if (e.target.closest('[data-act=briefPdf]')) downloadBriefing();
   if (e.target.closest('[data-act=bulRemove]')) removeBulletin();
+  const wr = e.target.closest('[data-act=wxUpRemove]');
+  if (wr) removeWxUpload(wr.dataset.kind);
 });
 panels.brief.addEventListener('change', (e) => {
   const t = e.target;
   if (t.dataset.tem) { state.tem[t.dataset.tem] = t.checked; scheduleSave(); }
   if (t.dataset.mb) { state.mb[t.dataset.mb] = t.value; scheduleSave(); }
   if (t.dataset.act === 'bulFile' && t.files && t.files[0]) addBulletin(t.files[0]);
+  if (t.dataset.act === 'wxUp' && t.files && t.files[0]) addWxUpload(t.dataset.kind, t.files[0]);
   if (t.dataset.unlock) {
     const ad = t.dataset.unlock;
     state.unlocked = t.checked ? [...new Set([...state.unlocked, ad])] : state.unlocked.filter((x) => x !== ad);
@@ -2772,6 +2818,7 @@ async function downloadBriefing() {
       const p = legPack(); p.withMb = true; packs.push(p);
     }
     let bulletinAdded = false, chartsMissing = false, surfaceAdded = false;
+    const wxAdded = new Set();
     const addBulletinPages = async () => { if (bulletin && !bulletinAdded) { bulletinAdded = true; await add(b64ToBytes(bulletin.b64)); } };
     if (m) await addBulletinPages();
     for (const p of packs) {
@@ -2788,15 +2835,18 @@ async function downloadBriefing() {
           pg.drawText(pdfText(sf.label), { x: 20, y: 570, size: 11, font: F.bold });
         } catch { chartsMissing = true; }
       }
-      if (p.charts) for (const c of [p.charts.sigwx, p.charts.wind]) {
-        const bytes = await fetchChartBytes(c);
+      if (p.charts) for (const kind of ['sigwx', 'wind']) {
+        const c = p.charts[kind], u = wxUploads[kind];
+        if (u && wxAdded.has(kind)) continue; // the student's own chart goes in once
+        const bytes = u ? b64ToBytes(u.b64) : await fetchChartBytes(c);
         if (!bytes) { chartsMissing = true; continue; }
+        if (u) wxAdded.add(kind);
         try {
-          const img = await out.embedPng(bytes);
+          const img = u ? await out.embedJpg(bytes) : await out.embedPng(bytes);
           const pg = out.addPage([841.89, 595.28]);
           const k = Math.min(801 / img.width, 540 / img.height);
           pg.drawImage(img, { x: (841.89 - img.width * k) / 2, y: 18, width: img.width * k, height: img.height * k });
-          pg.drawText(pdfText(`${c.label} · AEMET`), { x: 20, y: 570, size: 11, font: F.bold });
+          pg.drawText(pdfText(u ? `${WXUP_NAME[kind]} · AEMET · added ${zl(new Date(u.added))}` : `${c.label} · AEMET`), { x: 20, y: 570, size: 11, font: F.bold });
         } catch { chartsMissing = true; }
       }
       if (p.mapData) {
@@ -2811,7 +2861,7 @@ async function downloadBriefing() {
     const d = flightTime().toISOString().slice(0, 10);
     saveBlob(await out.save(), m ? `Briefing_Mission_${d}.pdf` : `Briefing_${endpoint('main', 0)?.icao || ''}-${endpoint('main', -1)?.icao || ''}_${d}.pdf`);
     state.briefDone = true; stepStatus(); scheduleSave();
-    toast(chartsMissing ? 'Briefing PDF ready — the AEMET charts could not be added (open them in step 4 · Briefing)' : 'Briefing PDF ready');
+    toast(chartsMissing ? 'Briefing PDF ready — some AEMET charts could not be added (add them in step 4 · Briefing)' : 'Briefing PDF ready');
   } catch (err) { console.error(err); toast('Could not build the briefing: ' + err.message); }
   finally { wxState = keepWx; }
 }
