@@ -52,10 +52,12 @@ function adWaypoint(ad) {
   return { id: ++uid, name: ad.icao, lat: ad.lat, lon: ad.lon, ref: ad.icao, var: ad.var };
 }
 
+// a number that could not be read (e.g. typed with a comma by an older version) is saved as null: start it empty
+const cleanNums = (o) => Object.fromEntries(Object.entries(o || {}).map(([k, v]) => [k, v === null || (typeof v === 'number' && !Number.isFinite(v)) ? '' : v]));
 function load() {
   try {
     const s = JSON.parse(localStorage.getItem(STORE));
-    if (s && s.main) { const d = defaultState(); return { ...d, ...s, flight: { ...d.flight, ...s.flight }, view: { ...d.view, ...s.view, ...(s.view && s.view.chartV ? {} : { base: 'chart', chartV: 1 }), ...(s.view && s.view.namesV ? {} : { names: true, namesV: 1 }) }, mb: { ...d.mb, ...s.mb }, settings: { ...d.settings, ...s.settings }, unlocked: s.unlocked || d.unlocked, tem: s.tem || {} }; }
+    if (s && s.main) { const d = defaultState(); return { ...d, ...s, flight: { ...d.flight, ...cleanNums(s.flight) }, view: { ...d.view, ...s.view, ...(s.view && s.view.chartV ? {} : { base: 'chart', chartV: 1 }), ...(s.view && s.view.namesV ? {} : { names: true, namesV: 1 }) }, mb: { ...d.mb, ...s.mb }, settings: { ...d.settings, ...s.settings }, unlocked: s.unlocked || d.unlocked, tem: s.tem || {} }; }
   } catch { /* first run or storage blocked */ }
   return defaultState();
 }
@@ -1017,6 +1019,14 @@ function renderRoute() {
   panels.route.innerHTML = html;
 }
 
+/** Number typed by the student: accepts a decimal comma (Spanish keyboards) or point; '' when empty or not a number. */
+function num(v) {
+  const t = String(v ?? '').trim().replace(/\s+/g, '').replace(',', '.');
+  if (t === '') return '';
+  const n = parseFloat(t);
+  return Number.isFinite(n) ? n : '';
+}
+const numMin0 = (v) => { const n = num(v); return n === '' ? '' : Math.max(0, n); };
 panels.route.addEventListener('change', (e) => {
   const t = e.target;
   if (t.dataset.flag) { route()[t.dataset.flag] = t.checked; return update({ rerenderPanels: true }); }
@@ -1026,9 +1036,9 @@ panels.route.addEventListener('change', (e) => {
   const w = route().waypoints.find((x) => x.id === +row.dataset.id); if (!w) return;
   const f = t.dataset.f;
   let v = t.value.trim();
-  if (f === 'wdir') v = v === '' ? '' : ((+v % 360) + 360) % 360;
-  if (f === 'wspd' || f === 'tas') v = v === '' ? '' : Math.max(0, +v);
-  if (f === 'var') v = v === '' ? '' : +v;
+  if (f === 'wdir') { v = num(v); if (v !== '') v = ((v % 360) + 360) % 360; }
+  if (f === 'wspd' || f === 'tas') v = numMin0(v);
+  if (f === 'var') v = num(v);
   if (f === 'alt') v = /^fl/i.test(v) ? v.toUpperCase().replace(/\s+/g, '') : (v === '' ? '' : parseAlt(v));
   w[f] = v;
   if (f === 'alt') w.altAuto = false; // the student chose this level
@@ -1210,11 +1220,11 @@ panels.fuel.addEventListener('change', (e) => {
   if (pk) {
     state.perf = state.perf || {};
     const own = (state.perf[state.flight.type] = state.perf[state.flight.type] || {});
-    own[pk] = e.target.value === '' ? '' : Math.max(0, +e.target.value);
+    own[pk] = numMin0(e.target.value);
     return update({ rerenderPanels: true });
   }
   const k = e.target.dataset.ff; if (!k) return;
-  state.flight[k] = e.target.value === '' ? '' : Math.max(0, +e.target.value);
+  state.flight[k] = numMin0(e.target.value);
   update({ rerenderPanels: true });
 });
 
@@ -1371,15 +1381,16 @@ panels.mb.addEventListener('change', (e) => {
   if (t.dataset.ff) {
     const k = t.dataset.ff;
     if (k === 'type') { state.flight.type = t.value; state.flight.reg = Object.keys(acOf(t.value).regs)[0] || ''; state.flight.fob = Math.min(+state.flight.fob || 0, acOf(t.value).fuelMaxL) || acOf(t.value).fuelMaxL; }
-    else state.flight[k] = k === 'reg' || k === 'weather' ? (k === 'reg' ? t.value.toUpperCase().trim() : t.value) : (t.value === '' ? '' : Math.max(0, +t.value));
+    else state.flight[k] = k === 'reg' || k === 'weather' ? (k === 'reg' ? t.value.toUpperCase().trim() : t.value) : numMin0(t.value);
   } else if (t.dataset.mb) {
-    state.mb[t.dataset.mb] = t.dataset.mb === 'studentCode' ? t.value.toUpperCase().trim() : t.value;
+    const mk = t.dataset.mb;
+    state.mb[mk] = mk === 'studentCode' ? t.value.toUpperCase().trim() : /Manual$/.test(mk) ? num(t.value) : t.value;
   } else if (t.dataset.mbflag) {
     state.mb.tripSource = t.checked ? 'route' : 'manual';
   } else if (t.dataset.pc) {
     const [role, k] = t.dataset.pc.split('.');
     state.perfCond = state.perfCond || {};
-    state.perfCond[role] = { ...(state.perfCond[role] || {}), [k]: k === 'surface' ? t.value : t.value === '' ? '' : +t.value };
+    state.perfCond[role] = { ...(state.perfCond[role] || {}), [k]: k === 'surface' ? t.value : num(t.value) };
   } else return;
   update({ rerenderPanels: true });
 });
