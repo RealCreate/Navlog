@@ -1,3 +1,4 @@
+import { AEMET_API_KEY, AEMET_KEY_EXPIRES } from './aemet-key.js';
 import { AERODROMES, POINTS, FLEET_TYPES, fleetType, SOP, adByIcao, mergeAip, procedureFor, PROCEDURES } from './data.js';
 import { computeNavlog, stdFlags, fuelPolicy, fmtMMSS, fmtHMS, fmtVar, fmtAlt, parseAlt, cruiseTas, distanceNm, midpoint, trueCourse } from './nav.js';
 import { buildNavlogPdf, buildMbPdf } from './pdf.js';
@@ -1584,12 +1585,13 @@ async function fetchChartBytes(c) {
   return null;
 }
 
-/* Surface pressure chart (Briefing List 1A): AEMET OpenData analysis map, with the student's own
- * free API key kept only in this browser. Without a key: link to AEMET's surface charts page. */
-const AEMET_KEY = 'navlog.aemetKey.v1';
+/* Surface pressure chart (Briefing List 1A): AEMET OpenData analysis map, with the app's built-in
+ * key (js/aemet-key.js, valid 3 months). Without a valid key: link to AEMET's surface charts page. */
+try { localStorage.removeItem('navlog.aemetKey.v1'); } catch { /* old pasted key no longer used */ }
+const aemetExpired = () => Date.now() > Date.parse(`${AEMET_KEY_EXPIRES}T23:59:59Z`);
 const AEMET_FRONTS = 'https://www.aemet.es/en/eltiempo/prediccion/mapa_frentes';
 let surface = null; // { at, url (object URL), png (bytes), label } | { at, error }
-const aemetKey = () => { try { return localStorage.getItem(AEMET_KEY) || ''; } catch { return ''; } };
+const aemetKey = () => (AEMET_API_KEY && !aemetExpired() ? AEMET_API_KEY : '');
 async function loadSurface(force) {
   const key = aemetKey();
   if (!key) return null;
@@ -1612,11 +1614,10 @@ async function loadSurface(force) {
 function surfaceHtml() {
   const key = aemetKey();
   const link = `<a href="${AEMET_FRONTS}" target="_blank" rel="noopener">AEMET surface pressure charts ↗</a>`;
-  if (!key) return `<div class="label">${link} (analysis + forecasts). To show the analysis here and in the PDF, paste your free <a href="https://opendata.aemet.es/centrodedescargas/altaUsuario" target="_blank" rel="noopener">AEMET OpenData key</a> — it stays on this device.</div>
-    <div class="row" style="gap:8px;margin-top:8px"><input id="aemetKeyIn" type="password" placeholder="AEMET OpenData API key" autocomplete="off" style="flex:1"><button class="btn" data-act="aemetKeySave">Save</button></div>`;
+  if (!key) return `<div class="label">${link} (analysis + forecasts)${aemetExpired() ? ' · the app\'s AEMET key has expired and needs renewing' : ''}.</div>`;
   if (!surface) { loadSurface().then(() => { const el = document.getElementById('surfaceBox'); if (el) el.innerHTML = surfaceHtml(); }); return `<div class="label">Loading… · ${link}</div>`; }
-  if (surface.error) return `<div class="label">Could not load the AEMET analysis (${esc(surface.error)}) · ${link} · <a href="#" data-act="aemetKeyClear">change key</a></div>`;
-  return `<figure class="wxchart"><img alt="Surface pressure analysis" src="${surface.url}"><figcaption>${esc(surface.label)} · ${link} · <a href="#" data-act="aemetKeyClear">remove key</a></figcaption></figure>`;
+  if (surface.error) return `<div class="label">Could not load the AEMET analysis (${esc(surface.error)}) · ${link}</div>`;
+  return `<figure class="wxchart"><img alt="Surface pressure analysis" src="${surface.url}"><figcaption>${esc(surface.label)} · ${link}</figcaption></figure>`;
 }
 
 /* ---------------- ICARO NOTAM bulletin (saved PDF, added by the student) ---------------- */
@@ -1798,7 +1799,7 @@ function renderSettings() {
     <div class="row"><span class="grow label">FBYxxY: xx is your instructor's number, Y the time-of-day letter. The inbound callsign is the next letter (FBY12A → FBY12B).</span></div></div>
   <div class="group-title"><span>My unlocked aerodromes</span></div><div class="group"><div class="chips">${EASY_FIRST.map((ad) => `<label><input type="checkbox" data-unlock="${ad}" ${state.unlocked.includes(ad) ? 'checked' : ''}>${ad}</label>`).join('')}</div></div>
   <p class="note">Solo flights only go to aerodromes already flown with an instructor (solo manual).</p>
-  <div class="group-title"><span>AEMET surface pressure chart</span></div><div class="group pad"><div id="surfaceBoxSettings">${aemetKey() ? '<div class="label">Your AEMET OpenData key is saved on this device.</div><button class="btn small" data-act="aemetKeyClear">Remove key</button>' : surfaceHtml()}</div></div>
+  <div class="group-title"><span>AEMET surface pressure chart</span></div><div class="group pad"><div class="label">${aemetExpired() ? `The AEMET OpenData key expired on ${AEMET_KEY_EXPIRES} — it needs renewing in the app.` : `Built into the app · AEMET OpenData key valid until ${AEMET_KEY_EXPIRES}.`}</div></div>
   <p class="note">Settings stay on this device.</p>`;
   panels.settings.innerHTML = html;
   sigInit();
@@ -1833,17 +1834,6 @@ panels.settings.addEventListener('click', (e) => {
     const c = document.getElementById('sigPad'); c.getContext('2d').clearRect(0, 0, c.width, c.height);
     state.settings.signature = ''; state.settings.signaturePad = ''; scheduleSave();
   }
-  if (e.target.closest('[data-act=aemetKeySave]')) {
-    const v = (document.getElementById('aemetKeyIn')?.value || '').trim();
-    if (!v) return;
-    try { localStorage.setItem(AEMET_KEY, v); } catch { /* private mode */ }
-    surface = null; renderSettings(); toast('AEMET key saved');
-  }
-  if (e.target.closest('[data-act=aemetKeyClear]')) {
-    e.preventDefault();
-    try { localStorage.removeItem(AEMET_KEY); } catch { /* ignore */ }
-    surface = null; renderSettings();
-  }
 });
 panels.settings.addEventListener('change', (e) => {
   const t = e.target;
@@ -1867,17 +1857,6 @@ panels.brief.addEventListener('click', (e) => {
   if (e.target.closest('[data-act=toMb]')) document.querySelector('#modes [data-mode=mb]').click();
   if (e.target.closest('[data-act=briefPdf]')) downloadBriefing();
   if (e.target.closest('[data-act=bulRemove]')) removeBulletin();
-  if (e.target.closest('[data-act=aemetKeySave]')) {
-    const v = (document.getElementById('aemetKeyIn')?.value || '').trim();
-    if (!v) return;
-    try { localStorage.setItem(AEMET_KEY, v); } catch { /* private mode */ }
-    surface = null; document.getElementById('surfaceBox').innerHTML = surfaceHtml();
-  }
-  if (e.target.closest('[data-act=aemetKeyClear]')) {
-    e.preventDefault();
-    try { localStorage.removeItem(AEMET_KEY); } catch { /* ignore */ }
-    surface = null; document.getElementById('surfaceBox').innerHTML = surfaceHtml();
-  }
 });
 panels.brief.addEventListener('change', (e) => {
   const t = e.target;
