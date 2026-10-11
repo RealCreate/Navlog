@@ -355,7 +355,8 @@ function addPoint(ref) {
       for (const id of proc.points) {
         const p = vrpRef(firstAd.icao, id); if (!p) continue;
         const wp = newWaypoint(p.lat, p.lon, p);
-        wp.proc = 'dep'; wp.procRoute = proc.route; if (proc.alt) wp.alt = proc.alt;
+        const a = (proc.pointAlt && proc.pointAlt[id]) ?? proc.alt;
+        wp.proc = 'dep'; wp.procRoute = proc.route; if (a) wp.alt = a;
         wps.push(wp);
       }
       toast(`Departure ${proc.points.join(' → ')}${proc.alt ? ` at ${proc.alt} ft` : ''} · ${proc.source}`);
@@ -395,20 +396,26 @@ function addPoint(ref) {
           return p && p.type === 'vrp' && p.ad === ad.icao && routes.some((r) => r.includes(p.id) && r.includes(lastRef.id)); };
         let k = wps.length - 1;
         while (k - 1 >= 1 && ofAd(wps[k - 1]) && wps[k - 1].proc !== 'dep') k--;
-        for (let j = k; j < wps.length; j++) { if (proc.alt) wps[j].alt = proc.alt; if (j > k) wps[j].proc = 'arr'; }
-        if (proc.alt) last.alt = proc.alt; // established at the procedure altitude over the entry point
+        // altitude over each point: per-point SOP value (LEBG) or the corridor altitude; low-cloud 4000 ft
+        const lowCloud = state.flight.lowCloud && ad.icao === 'LEBG';
+        const pa = (id) => (lowCloud ? 4000 : (proc.pointAlt && proc.pointAlt[id]) ?? proc.alt);
+        const idOf = (w) => (POINTS.find((x) => x.key === w.ref) || {}).id;
+        for (let j = k; j < wps.length; j++) { const a = pa(idOf(wps[j])); if (a) wps[j].alt = a; if (j > k) wps[j].proc = 'arr'; }
+        let lastAlt = pa(lastRef.id);
+        if (lastAlt) last.alt = lastAlt; // established at the procedure altitude over the entry point
         for (const id of proc.points.slice(1)) {
           const p = vrpRef(ad.icao, id); if (!p) continue;
           const wp = newWaypoint(p.lat, p.lon, p);
-          wp.proc = 'arr'; if (proc.alt) wp.alt = proc.alt;
+          lastAlt = pa(id) || lastAlt;
+          wp.proc = 'arr'; if (lastAlt) wp.alt = lastAlt;
           wps.push(wp);
         }
         const wp = newWaypoint(ref.lat, ref.lon, ref);
-        wp.proc = 'arr'; if (proc.alt) wp.alt = proc.alt;
+        wp.proc = 'arr'; if (lastAlt) wp.alt = lastAlt;
         wps.push(wp);
         const entryId = (POINTS.find((x) => x.key === wps[k].ref) || lastRef).id;
         const solo = state.flight.solo && proc.solo && !proc.solo.includes(entryId);
-        toast(solo ? `Solo flights may only enter via ${proc.solo.join(' or ')} (SOP)` : `Arrival ${proc.points.join(' → ')} → ${ad.icao}${proc.alt ? ` at ${proc.alt} ft` : ''} · ${proc.source}`);
+        toast(solo ? `Solo flights may only enter via ${proc.solo.join(' or ')} (SOP)` : `Arrival ${proc.points.map((id) => `${id}${pa(id) ? ' ' + pa(id) : ''}`).join(' → ')} → ${ad.icao} · ${proc.source}`);
         haptic(); return update({ rerenderPanels: true });
       }
     } else if (wps.length > 1 && ad.vrps.length) {
@@ -637,7 +644,7 @@ const BASES = ['LEBG', 'LERJ'];
 function compute() {
   const f = state.flight;
   const dep0 = endpoint('main', 0);
-  if (!f.fobSet && (!dep0 || BASES.includes(dep0.icao))) f.fob = acOf(f.type).fuelMaxL;
+  if (!f.fobSet && !(state.mission && f.carried) && (!dep0 || BASES.includes(dep0.icao))) f.fob = acOf(f.type).fuelMaxL;
   const ta = endpoint('main', 0)?.ta || 6000;
   const sop = planSop();
   const main = computeNavlog({ ...state.main, fob: +f.fob || 0, ta }, sop);
@@ -2059,11 +2066,11 @@ function withLeg(leg, fobL, fn) {
   legSwap = true;
   try {
     state.main = clone(leg.main); state.alt = clone(state.mission.type === 'local' ? state.mission.sharedAlt : leg.alt) || { waypoints: [], stdDep: false, stdArr: false };
-    state.time = leg.time; state.flight.fob = fobL; state.active = 'main';
+    state.time = leg.time; state.flight.fob = fobL; state.active = 'main'; keep.carried = state.flight.carried; state.flight.carried = true;
     result = compute();
     return fn();
   } finally {
-    Object.assign(state, { main: keep.main, alt: keep.alt, time: keep.time, active: keep.active }); state.flight.fob = keep.fob; result = keep.result;
+    Object.assign(state, { main: keep.main, alt: keep.alt, time: keep.time, active: keep.active }); state.flight.fob = keep.fob; state.flight.carried = keep.carried; result = keep.result;
     legSwap = false;
   }
 }
@@ -2123,6 +2130,8 @@ function createMission(type, d) {
     m.legs.push(newLeg(`Inbound · ${d.dest} → ${base}`, 'a', d.dest, base, later(120)));
     m.legs.push(newLeg(`Reserve outbound · ${base} → ${d.reserve}`, 'b', base, d.reserve, t0));
     m.legs.push(newLeg(`Reserve inbound · ${d.reserve} → ${base}`, 'b', d.reserve, base, later(120)));
+    // plus a local nav with its own alternate, in case the cross-country cannot be flown
+    m.legs.push(newLeg(`Local nav · ${base}`, 'l', base, base, t0));
   } else {
     const trip = (chain, a, b, name) => {
       m.legs.push(newLeg(`${name} leg 1 · ${base} → ${a}`, chain, base, a, t0));
@@ -2150,6 +2159,7 @@ function openLeg(id, quiet) {
   state.alt = clone(m.type === 'local' ? m.sharedAlt : leg.alt) || { waypoints: [], stdDep: false, stdArr: false };
   state.time = leg.time; state.active = 'main';
   state.flight.fob = figs ? Math.round(figs.get(id).fob * 10) / 10 : +leg.fob || state.flight.fob;
+  state.flight.carried = !!figs; // later legs carry the fuel left (no full tanks, e.g. LERJ → LEBG on a cross-country)
   syncSlider();
   if (!quiet) { state.mode = 'plan'; tab = 'route'; showPanels(); toast(`Editing ${leg.label}`); }
   update({ rerenderPanels: true });
@@ -2173,7 +2183,7 @@ function missionFormHtml(replace) {
       <label class="field"><span>Trip B · 1st</span><select id="msB1">${opts('LEVT')}</select></label>
       <label class="field"><span>Trip B · 2nd</span><select id="msB2">${opts('LEPP')}</select></label>
     </div>
-    <div class="row"><span class="grow label">Local: 2 navlogs + a shared alternate, 1 M&amp;B. Cross-country: 2 flights + 2 for the reserve airport = 4 navlogs, 1 M&amp;B per flight, no refuel. Triangular: two different trips, two airports + base, 300 NM each (solo manual).</span></div>
+    <div class="row"><span class="grow label">Local: 2 navlogs + a shared alternate, 1 M&amp;B. Cross-country: 2 flights + 2 for the reserve airport + 1 local nav = 5 navlogs, each with its alternate, 1 M&amp;B per flight, no refuel. Triangular: two different trips, two airports + base, 300 NM each (solo manual).</span></div>
     <button class="btn primary wide" data-act="msCreate">${replace ? 'Replace the mission' : 'Create mission'}</button>`;
 }
 
@@ -2224,7 +2234,7 @@ function missionChecks(figs) {
     out.push({ ok: true, text: 'M&B: 1 for the local navigation' });
   }
   if (m.type === 'xc') {
-    out.push({ ok: legs.length >= 4 && legs.every(({ l }) => legPlanned(l)), text: 'Cross-country: 2 nav logs (1 per flight) + 2 for the reserve airport = 4 nav logs, all planned' });
+    out.push({ ok: legs.length >= 5 && legs.every(({ l }) => legPlanned(l)), text: 'Cross-country: 2 nav logs (1 per flight) + 2 for the reserve airport + 1 local nav = 5 nav logs, all planned' });
     out.push({ ok: legs.every(({ f }) => f.alt), text: 'Every navigation planned with its alternate (one FlyBy base among the alternates)' });
     out.push({ ok: true, text: 'M&B: 1 for each flight (included in the download)' });
   }

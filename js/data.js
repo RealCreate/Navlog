@@ -264,8 +264,12 @@ export const PROCEDURES = {
   LEBG: {
     routes: { N: ['N'], W: ['W'], S: ['E-1', 'S'], E: ['E-1', 'E'] },
     depRoutes: { N: ['N'], W: ['W'], S: ['S'], E: ['E'] }, // outbound: direct to the point
-    alt: { dep: 4000, arr: 4000 },
-    source: 'LEBG VAC: max 1000 ft AGL on the visual routes',
+    // School SOP (not the VAC): depart to every point at 5000 ft; arrive over N, W, S at 4500 ft,
+    // over E at 5000 ft, then E-1 at 4000 ft and to the field. (The FlyBy "tunnels" north of the
+    // field are flown at 4000 ft but are not official and not on the navlog.)
+    alt: { dep: 5000, arr: 4500 },
+    pointAlt: { arr: { N: 4500, W: 4500, S: 4500, E: 5000, 'E-1': 4000 } },
+    source: 'LEBG SOP: depart at 5000 ft; arrive N/W/S 4500 ft, E 5000 ft, E-1 4000 ft',
     soloEntry: ['N', 'W'],
   },
   LERJ: {
@@ -277,7 +281,7 @@ export const PROCEDURES = {
   // LEVT VAC 1.1 (WEF 25-DEC-25): N, E, S, W direct, 1000 ft AGL MAX (elev 1682 ft → 2600 ft).
   LEVT: {
     routes: { N: ['N'], E: ['E'], S: ['S'], W: ['W'] },
-    alt: { dep: 2600, arr: 2600 },
+    alt: { dep: 2500, arr: 2500 },
     source: 'LEVT VAC: 1000 ft AGL max in the corridors (2682 ft); contact TWR over the point',
   },
   // LEVD VAC 1.3: arrivals from N, W, NE via N-1 (La Mudarra), from S, E via S-1 (Zaratán);
@@ -285,8 +289,8 @@ export const PROCEDURES = {
   // W, N and NE (4200 ft). Do not use NE (Phase 3 and solo manuals).
   LEVD: {
     routes: { N: ['N-1', 'N'], W: ['N-1', 'W'], NE: ['N-1', 'NE'], S: ['S-1', 'S'], E: ['S-1', 'E'] },
-    alt: { dep: 3700, arr: 3700 },
-    altByRoute: { N: { dep: 4200, arr: 4200 }, W: { dep: 4200, arr: 4200 }, NE: { dep: 4200, arr: 4200 } },
+    alt: { dep: 3500, arr: 3500 },
+    altByRoute: { N: { dep: 4000, arr: 4000 }, W: { dep: 4000, arr: 4000 }, NE: { dep: 4000, arr: 4000 } },
     source: 'LEVD VAC: 1000 ft AGL via E/S, 1500 ft AGL via W/N/NE; join via N-1 or S-1. NE point not used (SOP)',
     avoid: ['NE'],
   },
@@ -298,8 +302,8 @@ export const PROCEDURES = {
     alt: { dep: 4000, arr: 4000 },
     source: 'LELN VAC: circuit at 1000 ft AGL, S and SE join via S-1; with LED7 active only S or SE. Full-stop landing (solo manual)',
   },
-  // VAC heights are converted with the aerodrome elevation and rounded down to the 100 ft below,
-  // so the planned altitude never exceeds the VAC maximum.
+  // VAC heights are converted with the aerodrome elevation and rounded down to the 500 ft below
+  // (school preference: levels in 500 ft steps, never above the VAC maximum).
   // LEPP VAC 1.1 (WEF 22-JAN-26): contact TWR over N (Usetxi), E (Lizárraga) or W (Zabalza-Arraiza),
   // direct routes, MAX ALT 1000 ft AGL (elev 1506 ft → 2500 ft). Hold over the point if told.
   LEPP: {
@@ -327,9 +331,9 @@ export const PROCEDURES = {
   // S-1 joins via S, W-1 via W.
   LEHC: {
     routes: { N: ['N'], E: ['E'], S: ['S', 'S-1'], W: ['W', 'W-1'], SW: ['SW'] },
-    alt: { dep: 2700, arr: 2700 },
-    altByRoute: { W: { dep: 2200, arr: 2200 } },
-    source: 'LEHC VAC: 1000 ft AGL max (5500 ft AMSL only with IFR traffic reported), W route 500 ft AGL max; notify AFIS before the point',
+    alt: { dep: 2500, arr: 2500 },
+    altByRoute: { W: { dep: 2000, arr: 2000 } },
+    source: 'LEHC VAC: 1000 ft AGL max (planned 2500 ft) (5500 ft AMSL only with IFR traffic reported), W route 500 ft AGL max; notify AFIS before the point',
   },
   // LESA VAC 1.1 (WEF 04-SEP-25): North route N–N-1 (road N-630 0.5 NM left), East route E–E-1
   // (N-501 0.5 NM left), South route S (river Tormes 0.5 NM left); 1000 ft AGL max (2595 → 3500 ft).
@@ -356,7 +360,7 @@ export function procedureFor(adIcao, vrpId, kind) {
       const [name, all] = route;
       const pts = all.slice(0, all.indexOf(vrpId) + 1);
       const alt = (p.altByRoute && p.altByRoute[name] ? p.altByRoute[name] : p.alt)[kind];
-      return { points: kind === 'dep' ? pts : [...pts].reverse(), alt, route: name, source: (p.avoid || []).includes(vrpId) ? `${vrpId} is not used (SOP) — ${p.source}` : p.source, solo: p.soloEntry };
+      return { points: kind === 'dep' ? pts : [...pts].reverse(), alt, pointAlt: p.pointAlt && p.pointAlt[kind], route: name, source: (p.avoid || []).includes(vrpId) ? `${vrpId} is not used (SOP) — ${p.source}` : p.source, solo: p.soloEntry };
     }
     if (ad && ad.vrps.some((x) => x.id === vrpId)) return { points: [vrpId], alt: p.alt[kind], source: p.source, solo: p.soloEntry };
   }
@@ -383,9 +387,9 @@ export const FLEET_TYPES = [
     perf: { tasBase: 90, ...GEN, src: 'SOP2517 cruise 90 kt; no PS-28 cruise chart in the SOP → Phase 2 general rule (check the POH)' } },
   { id: 'P2002', name: 'Tecnam P2002 JF', icao: 'P2002', mb: true, regs: ['EC-MOH', 'EC-MOI', 'EC-MOJ'],
     xwind: { fi: 12, solo: 10 }, headwind: { fi: 24, solo: 20 }, gustNote: 'Crosswind incl. gusts: FI 18 kt gusting 20, solo 10 kt gusting 15 (SOP2517)',
-    perf: { tasBase: 90, ffCruise: 22, ffClimb: 23, ffDescent: 12, src: 'SOP2517 cruise 90 kt; AFM 580 kg chart, ~100 KTAS most restrictive 22 L/h' } },
+    perf: { tasBase: 90, ...GEN, src: 'SOP2517 cruise 90 kt; school rule: general fuel flows 18/23/12 L/h for every type (safety margin)' } },
   { id: 'PMENTOR', name: 'Tecnam P-Mentor', icao: 'PMEN', mb: true, regs: ['EC-OCF', 'EC-OCG'],
-    xwind: { fi: 10 }, perf: { tasBase: 90, ffCruise: 14, ffClimb: 23, ffDescent: 12, src: 'SOP2520 cruise 90 kt; AFM 720 kg chart 4800 RPM 14 L/h' } },
+    xwind: { fi: 10 }, perf: { tasBase: 90, ...GEN, src: 'SOP2520 cruise 90 kt; school rule: general fuel flows 18/23/12 L/h (safety margin)' } },
   { id: 'C172', name: 'Cessna 172N', icao: 'C172', mb: true, regs: ['EC-NSB', 'EC-IOG', 'EC-IDJ'],
     xwind: { fi: 15 }, perf: { tasBase: 100, ...GEN, src: 'SOP2519 cruise 100 kt; no cruise chart in the SOP → Phase 2 general rule (check the POH)' } },
   { id: 'C172RG', name: 'Cessna 172 RG', icao: 'C72R', mb: true, regs: [],
@@ -393,6 +397,6 @@ export const FLEET_TYPES = [
   { id: 'PA28', name: 'Piper PA-28-181', icao: 'P28A', mb: true, regs: ['EC-JFE'],
     xwind: { fi: 17 }, perf: { tasBase: 100, ...GEN, src: 'SOP2519 cruise 100 kt; no cruise chart in the SOP → Phase 2 general rule (check the POH)' } },
   { id: 'P2006', name: 'Tecnam P2006T', icao: 'P2006', mb: true, regs: ['I-CHAU', 'EC-LIF', 'EC-NKF', 'EC-OON', 'EC-OPL'],
-    xwind: { fi: 17 }, perf: { tasBase: 100, ffCruise: 28.6, ffClimb: 46, ffDescent: 24, src: 'SOP2521 medium cruise 100 kt; AFM 1150 kg chart 2100 RPM/22" 14.3 L/h per engine (both engines); climb/descent: general rule × 2 engines (check the AFM)' } },
+    xwind: { fi: 17 }, perf: { tasBase: 100, ffCruise: 36, ffClimb: 46, ffDescent: 24, src: 'SOP2521 medium cruise 100 kt; school rule: general fuel flows 18/23/12 L/h per engine × 2 engines (safety margin)' } },
 ];
 export const fleetType = (id) => FLEET_TYPES.find((t) => t.id === id) || FLEET_TYPES[0];

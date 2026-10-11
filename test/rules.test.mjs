@@ -50,8 +50,8 @@ test('VAC procedures for LEPP, LESO, LEXJ, LEHC, LESA', () => {
   assert.deepEqual(procedureFor('LEXJ', 'E-1', 'arr').points, ['E-1', 'E-2', 'N-1']);
   assert.deepEqual(procedureFor('LEXJ', 'W-1', 'arr').points, ['W-1', 'S-2']);
   assert.deepEqual(procedureFor('LEHC', 'S-1', 'arr').points, ['S-1', 'S']);
-  assert.equal(procedureFor('LEHC', 'W-1', 'arr').alt, 2200); // W route 500 ft AGL max
-  assert.equal(procedureFor('LEHC', 'N', 'arr').alt, 2700);
+  assert.equal(procedureFor('LEHC', 'W-1', 'arr').alt, 2000); // W route 500 ft AGL max, 500 ft steps
+  assert.equal(procedureFor('LEHC', 'N', 'arr').alt, 2500);
   assert.deepEqual(procedureFor('LESA', 'N', 'arr').points, ['N', 'N-1']);
   assert.equal(procedureFor('LESA', 'E', 'dep').alt, 3500);
 });

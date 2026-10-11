@@ -94,7 +94,10 @@ test('LEBG: straight out to S/E, inbound from S/E via E-1', () => {
   assert.deepEqual(procedureFor('LEBG', 'S', 'arr').points, ['S', 'E-1']);
   assert.deepEqual(procedureFor('LEBG', 'E', 'arr').points, ['E', 'E-1']);
   assert.deepEqual(procedureFor('LEBG', 'N', 'arr').points, ['N']);
-  assert.equal(procedureFor('LEBG', 'S', 'dep').alt, 4000);
+  assert.equal(procedureFor('LEBG', 'S', 'dep').alt, 5000); // school SOP, not the VAC
+  const e = procedureFor('LEBG', 'E', 'arr');
+  assert.equal(e.pointAlt.E, 5000); assert.equal(e.pointAlt['E-1'], 4000);
+  assert.equal(procedureFor('LEBG', 'N', 'arr').pointAlt.N, 4500);
 });
 
 test('LERJ corridor point anywhere on the corridor keeps the corridor altitude', () => {
@@ -114,14 +117,14 @@ test('Standard times only at aerodrome endpoints', () => {
 
 test('LEVD joins via N-1 / S-1 at the VAC heights; LELN via S-1 from S and SE; LEVT direct', () => {
   assert.deepEqual(procedureFor('LEVD', 'W', 'arr').points, ['W', 'N-1']);
-  assert.equal(procedureFor('LEVD', 'W', 'arr').alt, 4200);
+  assert.equal(procedureFor('LEVD', 'W', 'arr').alt, 4000);
   assert.deepEqual(procedureFor('LEVD', 'E', 'arr').points, ['E', 'S-1']);
-  assert.equal(procedureFor('LEVD', 'E', 'arr').alt, 3700);
+  assert.equal(procedureFor('LEVD', 'E', 'arr').alt, 3500);
   assert.deepEqual(procedureFor('LEVD', 'S', 'dep').points, ['S-1', 'S']);
   assert.match(procedureFor('LEVD', 'NE', 'arr').source, /not used/);
   assert.deepEqual(procedureFor('LELN', 'SE', 'arr').points, ['SE', 'S-1']);
   assert.deepEqual(procedureFor('LELN', 'N', 'arr').points, ['N']);
   assert.deepEqual(procedureFor('LELN', 'S', 'dep').points, ['S']);
   assert.deepEqual(procedureFor('LEVT', 'E', 'arr').points, ['E']);
-  assert.equal(procedureFor('LEVT', 'E', 'arr').alt, 2600);
+  assert.equal(procedureFor('LEVT', 'E', 'arr').alt, 2500);
 });
