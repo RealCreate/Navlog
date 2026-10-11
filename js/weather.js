@@ -66,7 +66,7 @@ const ceilingFt = (clouds) => {
 };
 const hasCb = (o) => (o.clouds || []).some((c) => /CB/.test(c.type || '')) || /\bCB\b|TS/.test(o.rawOb || o.rawTAF || o.wxString || '');
 
-function crosswind(ad, wdir, wspd, gust) {
+export function crosswind(ad, wdir, wspd, gust) {
   const rw = RUNWAYS[ad];
   if (!rw || wdir == null || wdir === 'VRB' || !wspd) return null;
   const s = Math.max(wspd, gust || 0);

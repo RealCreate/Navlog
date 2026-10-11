@@ -217,7 +217,35 @@ export async function buildMbFormPdf(m, meta, plan) {
     cp.drawText('LDG', { x: b.x + 5, y: b.y - 9, size: 7.5, font: bold, color: blue });
   }
 
+  if (meta.perf && meta.perf.length) addPerfPage(doc, font, bold, m, meta);
   if (plan) embedPlan(doc, plan);
   doc.setTitle(`M&B ${meta.reg || ac.name}`);
   return doc.save();
+}
+
+/** Extra page: take-off and landing distances (SOP: "M&B with Take Off and Landing Distances"). */
+function addPerfPage(doc, font, bold, m, meta) {
+  const { rgb } = window.PDFLib;
+  const page = doc.addPage([595.28, 841.89]);
+  const H = 841.89, ink = rgb(0.1, 0.1, 0.12), grey = rgb(0.45, 0.45, 0.5), blue = rgb(0.05, 0.25, 0.75), line = rgb(0.75, 0.75, 0.78);
+  let y = 60;
+  const text = (t, x, size = 10, f = font, color = ink) => page.drawText(String(t), { x, y: H - y, size, font: f, color });
+  text('Take-off & landing distances', 40, 18, bold); y += 20;
+  text(`${m.ac.name} · ${meta.reg || ''} · ${meta.date || ''}${meta.studentCode ? ` · student ${meta.studentCode}` : ''}`, 40, 10, font, grey); y += 28;
+  const ftm = 3.28084;
+  for (const { c, r } of meta.perf) {
+    const isTo = c.role === 'dep';
+    page.drawLine({ start: { x: 40, y: H - y + 12 }, end: { x: 555, y: H - y + 12 }, thickness: 0.6, color: line });
+    text(`${isTo ? 'TAKE-OFF' : 'LANDING'} · ${c.ad.icao} ${c.ad.name || ''}`, 40, 12, bold); y += 18;
+    text(`Elevation ${c.ad.elev} ft · QNH ${c.qnh} (${c.src.qnh}) · pressure altitude ${c.pa} ft · OAT ${c.oat} °C (${c.src.oat}) · wind ${c.wind >= 0 ? 'head' : 'tail'} ${Math.abs(c.wind)} kt (${c.src.wind}) · ${c.surface} · slope ${c.slope} %`, 40, 8.5, font, grey); y += 22;
+    const ph = !r || r.manual ? null : isTo ? r.to : r.ldg;
+    if (!ph || ph.manual) { text((r && (r.manual || ph?.manual)) || 'No table for this type — use the AFM/POH', 40, 10, font, rgb(0.84, 0, 0.08)); y += 30; continue; }
+    const both = (v) => (r.unit === 'ft' ? `${v} ft  (${Math.round(v / ftm)} m)` : `${v} m  (${Math.round(v * ftm)} ft)`);
+    text('Ground roll', 50, 11); text(both(ph.gr), 300, 11, bold, blue); y += 18;
+    text(isTo ? 'Distance over 50 ft obstacle' : 'Distance from 50 ft', 50, 11); text(both(ph.d50), 300, 11, bold, blue); y += 18;
+    if (ph.out) { text('Outside the table — nearest edge used, check the AFM', 50, 9, font, rgb(0.84, 0, 0.08)); y += 14; }
+    text(`${r.source}${ph.steps && ph.steps.length ? ' · corrections: ' + ph.steps.join(', ') : ''}`, 50, 8, font, grey); y += 12;
+    if (ph.note) { text(ph.note, 50, 8, font, grey); y += 12; }
+    text('TORA / LDA (AD 2.13): ____________   Margin: ____________', 50, 9, font, ink); y += 30;
+  }
 }

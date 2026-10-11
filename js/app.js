@@ -4,7 +4,8 @@ import { buildNavlogPdf, buildMbPdf } from './pdf.js';
 import { sampleTerrain, plannedProfile, drawProfile, profileAt } from './profile.js';
 import { PlacesLayer } from './places.js';
 import { fetchWinds } from './winds.js';
-import { fetchWeather, assess, metarSummary } from './weather.js';
+import { fetchWeather, assess, metarSummary, crosswind } from './weather.js';
+import { performance, pressureAlt, isaTemp, FT_PER_M } from './perf.js';
 import { MB_TYPES, computeMb, fmtMoment, cgLimitsAt, KG_TO_LB } from './mb.js';
 import { zl, utc, local } from './time.js';
 import { APPROVED, IFR_ONLY, EASY_FIRST, FULL_STOP, CLOSING_LOCAL, NO_REFUEL, FREQS, aerodromeOpen, airspaceCrossings, crossingIssue, buildFpl, departureBriefing, arrivalBriefing, temThreats } from './rules.js';
@@ -16,6 +17,7 @@ const LEBG = adByIcao('LEBG');
 const STORE = 'navlog.v1';
 const STEP_MIN = 5; // slider steps of 5 minutes
 const MAX_DAYS = 3; // plan at most 3 days ahead
+let wxState = { key: '', data: null, err: null, loading: false }; // METAR/TAF for the planned aerodromes
 const acOf = (type) => MB_TYPES[type] || MB_TYPES.P2008;
 
 /* ---------------- State ---------------- */
@@ -999,7 +1001,69 @@ function mbTrip() {
   };
 }
 
+/* ---------------- Take-off & landing performance (SOP: "M&B with Take Off and Landing Distances") ---------------- */
+
+// Conditions per aerodrome: from the METAR when it describes the flight time (±2 h of now),
+// otherwise ISA / 1013 hPa / calm, and anything the student typed wins.
+function perfConditions(role) {
+  const ad = role === 'dep' ? endpoint('main', 0) : endpoint('main', -1);
+  if (!ad) return null;
+  const own = (state.perfCond && state.perfCond[role]) || {};
+  const near = Math.abs(flightTime().getTime() - Date.now()) < 2 * 3600e3;
+  const m = near && wxState.data && wxState.data[ad.icao] ? wxState.data[ad.icao].metar : null;
+  const qnh = own.qnh !== undefined && own.qnh !== '' ? +own.qnh : m && m.altim ? Math.round(m.altim) : 1013;
+  const pa = pressureAlt(ad.elev || 0, qnh);
+  const oat = own.oat !== undefined && own.oat !== '' ? +own.oat : m && m.temp != null ? m.temp : Math.round(isaTemp(pa));
+  const xw = m ? crosswind(ad.icao, m.wdir, m.wspd, 0) : null;
+  const wind = own.wind !== undefined && own.wind !== '' ? +own.wind : xw ? xw.hw : 0;
+  return {
+    ad, role, qnh, pa, oat, wind, rwy: xw?.rwy, surface: own.surface || 'paved', slope: own.slope !== undefined && own.slope !== '' ? +own.slope : 0,
+    src: { qnh: own.qnh != null && own.qnh !== '' ? 'typed' : m ? 'METAR' : 'standard', oat: own.oat != null && own.oat !== '' ? 'typed' : m && m.temp != null ? 'METAR' : 'ISA', wind: own.wind != null && own.wind !== '' ? 'typed' : xw ? `METAR, RWY ${xw.rwy}` : 'calm' },
+  };
+}
+function perfType() {
+  const f = state.flight;
+  if (f.type === 'P2006') return MB_TYPES.P2006.ngRegs.includes(f.reg) ? 'P2006NG' : 'P2006';
+  return f.type;
+}
+function perfResults() {
+  const m = result.mb;
+  return ['dep', 'dest'].map((role) => {
+    const c = perfConditions(role);
+    if (!c) return null;
+    const weight = m && m.ac.unit === 'lb' ? (role === 'dep' ? m.to.mass : m.ldg.mass) : null;
+    return { c, r: performance(perfType(), { ...c, weight }) };
+  }).filter(Boolean);
+}
+function perfHtml() {
+  const list = perfResults();
+  if (!list.length) return '<div class="group"><div class="empty">Plan a route from an aerodrome to calculate take-off and landing distances.</div></div>';
+  const dist = (v, unit) => (unit === 'ft' ? `${v} ft <small class="label">${Math.round(v / FT_PER_M)} m</small>` : `${v} m <small class="label">${Math.round(v * FT_PER_M)} ft</small>`);
+  let html = '';
+  for (const { c, r } of list) {
+    const pc = (state.perfCond && state.perfCond[c.role]) || {};
+    html += `<div class="group-title"><span>${c.role === 'dep' ? 'Take-off' : 'Landing'} · ${c.ad.icao} · elev ${c.ad.elev} ft</span></div><div class="group">
+      <div class="row wrap">
+        <label class="field narrow"><span>QNH</span><input data-pc="${c.role}.qnh" inputmode="numeric" value="${esc(pc.qnh ?? '')}" placeholder="${c.qnh}"></label>
+        <label class="field narrow"><span>OAT °C</span><input data-pc="${c.role}.oat" inputmode="numeric" value="${esc(pc.oat ?? '')}" placeholder="${c.oat}"></label>
+        <label class="field narrow"><span>Wind kt +head</span><input data-pc="${c.role}.wind" inputmode="numeric" value="${esc(pc.wind ?? '')}" placeholder="${c.wind}"></label>
+        <label class="field narrow"><span>Slope %</span><input data-pc="${c.role}.slope" inputmode="decimal" value="${esc(pc.slope ?? '')}" placeholder="0"></label>
+        <label class="field narrow"><span>Surface</span><select data-pc="${c.role}.surface"><option value="paved" ${c.surface === 'paved' ? 'selected' : ''}>Paved</option><option value="grass" ${c.surface === 'grass' ? 'selected' : ''}>Grass</option></select></label>
+      </div>
+      <div class="row"><span class="grow label">Pressure altitude ${c.pa} ft · ISA ${Math.round(isaTemp(c.pa))} °C · QNH ${c.src.qnh}, OAT ${c.src.oat}, wind ${esc(c.src.wind)} (type a value to override)</span></div>`;
+    if (!r || r.manual) { html += `<div class="row check-bad"><span class="grow label">${esc(r ? r.manual : 'No table for this type')}</span></div></div>`; continue; }
+    const ph = c.role === 'dep' ? r.to : r.ldg;
+    if (ph.manual) { html += `<div class="row check-bad"><span class="grow label">${esc(ph.manual)}</span></div></div>`; continue; }
+    html += `<div class="row"><span class="grow">${c.role === 'dep' ? 'Take-off ground roll' : 'Landing ground roll'}</span><span class="value">${dist(ph.gr, r.unit)}</span></div>
+      <div class="row"><span class="grow"><b>${c.role === 'dep' ? 'Take-off distance over 50 ft' : 'Landing distance from 50 ft'}</b></span><span class="value"><b>${dist(ph.d50, r.unit)}</b></span></div>
+      ${ph.out ? '<div class="row check-bad"><span class="grow label">Outside the table — the nearest edge was used. Check the AFM.</span></div>' : ''}
+      <div class="row"><span class="grow label">${esc(r.source)}${ph.steps && ph.steps.length ? ` · corrections: ${esc(ph.steps.join(', '))}` : ''}${ph.note ? ` · ${esc(ph.note)}` : ''}. Compare with TORA/LDA (AD 2.13).</span></div></div>`;
+  }
+  return html;
+}
+
 function renderMB() {
+  loadWeather();
   const f = state.flight, mbs = state.mb;
   const m = result.mb;
   const ac = acOf(f.type);
@@ -1061,6 +1125,7 @@ function renderMB() {
   } else {
     html += '<div class="group"><div class="empty">Enter the empty mass and moment to calculate.</div></div>';
   }
+  html += perfHtml();
   html += `<div class="group">
       <div class="row"><span class="grow label">Fuel on board: use the real quantity checked with FISUP/Dispatcher, not an estimate (SOP).</span></div>
       <div class="row"><span class="grow label">Masses: use the real masses of the student, instructor and passengers (SOP).</span></div>
@@ -1084,6 +1149,10 @@ panels.mb.addEventListener('change', (e) => {
     state.mb[t.dataset.mb] = t.dataset.mb === 'studentCode' ? t.value.toUpperCase().trim() : t.value;
   } else if (t.dataset.mbflag) {
     state.mb.tripSource = t.checked ? 'route' : 'manual';
+  } else if (t.dataset.pc) {
+    const [role, k] = t.dataset.pc.split('.');
+    state.perfCond = state.perfCond || {};
+    state.perfCond[role] = { ...(state.perfCond[role] || {}), [k]: k === 'surface' ? t.value : t.value === '' ? '' : +t.value };
   } else return;
   update({ rerenderPanels: true });
 });
@@ -1095,7 +1164,7 @@ async function downloadMbPdf() {
   try {
     const bytes = await buildMbPdf(m, {
       date: flightTime().toLocaleDateString('en-GB'), reg: f.reg, studentCode: state.mb.studentCode,
-      weather: f.weather, notams: state.mb.notams,
+      weather: f.weather, notams: state.mb.notams, perf: perfResults(),
     }, planData());
     saveBlob(bytes, `MB_${f.reg || f.type}_${flightTime().toISOString().slice(0, 10)}.pdf`);
     toast('M&B sheet ready');
@@ -1208,16 +1277,17 @@ function dedupe(list) {
 }
 const hhmmZ = zl;
 
-let wxState = { key: '', data: null, err: null, loading: false };
 async function loadWeather(force = false) {
   const ads = [endpoint('main', 0), endpoint('main', -1), endpoint('alt', -1)].filter(Boolean).map((a) => a.icao);
   const key = ads.join(',');
-  if (!key || (!force && wxState.key === key && (wxState.data || wxState.loading))) return;
+  if (!key || (!force && wxState.key === key && (wxState.data || wxState.loading || wxState.err))) return;
   wxState = { key, data: null, err: null, loading: true };
   if (tab === 'brief') renderBriefing();
   try { wxState.data = await fetchWeather(ads); } catch (e) { wxState.err = e.message; }
   wxState.loading = false;
   if (tab === 'brief') renderBriefing();
+  // refresh the performance figures, but never re-render under the student's typing
+  if (state.mode === 'mb' && !panels.mb.contains(document.activeElement)) renderMB();
 }
 
 function weatherIssues() {
@@ -1309,6 +1379,13 @@ function renderBriefing() {
     <div class="wx"><div class="wx-head"><b>Frequencies</b></div>${esc(headerFor('main').freq)}</div>
   </div>`;
 
+  // 5 & 6. Mass & balance and performance (details in the Mass & Balance view)
+  const mbr = result.mb;
+  html += `<div class="group-title"><span>5 · Mass &amp; balance · 6 · Performance</span><button class="btn small" data-act="toMb">Open</button></div><div class="group">
+    <div class="row ${mbr ? (mbr.ok ? 'check-ok' : 'check-bad') : 'check-bad'}"><span class="grow">${mbr ? `T/O ${mbr.to.mass.toFixed(1)} ${mbr.ac.unit} · C.G. ${mbr.to.arm.toFixed(mbr.ac.armDp)} ${mbr.ac.armUnit}` : 'Mass &amp; balance not complete'}</span><span class="value">${mbr ? (mbr.ok ? 'IN LIMITS' : 'OUT') : '—'}</span></div>
+    ${perfResults().map(({ c, r }) => { const ph = r && !r.manual ? (c.role === 'dep' ? r.to : r.ldg) : null; return `<div class="row"><span class="grow">${c.role === 'dep' ? 'Take-off' : 'Landing'} ${c.ad.icao}</span><span class="value">${ph && !ph.manual ? `${ph.d50} ${r.unit} over 50 ft` : 'read the chart'}</span></div>`; }).join('')}
+  </div>`;
+
   // 7. TEM
   const crossings = airspaceCrossings(routeLegs('main'), AIRSPACES);
   const threats = temThreats({ ads: [dep, dest, alt].filter(Boolean).map((a) => a.icao), crossings, solo: f.solo, night, mountains: (terrainData || []).some((t) => t.corridor > 4500), hot: wxState.data && dep && (wxState.data[dep.icao]?.metar?.temp ?? 0) > 30 });
@@ -1328,6 +1405,7 @@ panels.brief.addEventListener('click', (e) => {
     return;
   }
   if (e.target.closest('[data-act=wx]')) loadWeather(true);
+  if (e.target.closest('[data-act=toMb]')) document.querySelector('#modes [data-mode=mb]').click();
 });
 panels.brief.addEventListener('change', (e) => {
   const t = e.target;
