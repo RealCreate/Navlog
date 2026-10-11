@@ -9,12 +9,13 @@ from osgeo import gdal, ogr
 
 def circle(lat, lon, nm, n=180):
     pts = []
-    for i in range(n + 1):
+    for i in range(n):
         b = 2 * math.pi * i / n
         d = nm / 60.0  # degrees of latitude
         la = lat + d * math.cos(b)
         lo = lon + d * math.sin(b) / math.cos(math.radians(la))
         pts.append((lo, la))
+    pts.append(pts[0])  # closed ring
     ring = ogr.Geometry(ogr.wkbLinearRing)
     for lo, la in pts: ring.AddPoint_2D(lo, la)
     poly = ogr.Geometry(ogr.wkbPolygon); poly.AddGeometry(ring)
