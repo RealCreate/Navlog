@@ -1,0 +1,528 @@
+                                             Aerodromes Bulletin
+                                                 Identifier: 3123651
+                                              ENAIRE ICARO SYSTEM (AIS-SPAIN)
+                                            AERONAUTICAL INFORMATION SYSTEM
+
+
+
+    Info. Type               Traffic Type        Active Information                        Valid Period Date Time
+        Meteorological
+                                  IFR                 Information           30    Days      From      11/10/2026 13:21
+        Aeronautical
+        SNOWTAM                   VFR                 All Information                       End:      11/10/2026 23:59
+        GPS
+
+   Chapters                    Included Information          Vertical Limits              QCodes
+
+         Operational
+                                    Aerodromes               Lower               0
+         Warnings                                                                          iPIB Incidence Type
+                                    Route                    Upper               999
+         Miscellaneous
+
+
+    Aerodrome
+
+       LEBG                 LEVT              LEVD                    LER                LELN
+                                                                       J
+
+
+
+
+                                                                ---
+
+                                                  AERODROMES
+                                                                ---
+                                              LEBG BURGOS/VILLAFRIA
+                                                                ---
+                                                              MET
+                                                                ---
+    METAR LEBG 111300Z 26007KT 180V320 9999 FEW050 21/08 Q1018
+    TAF LEBG 110800Z 1109/1209 VRB04KT 9999 FEW040 TX21/1115Z
+    TN09/1206Z PROB30 TEMPO 1202/1209 3000 BR BCFG
+                                                                ---
+                                                             NOTAM
+FROM 11/10/2026 12:30 TO 11/10/2026 16:10                       ---                                                 B8287/26
+    AFIS HR OF OPERATION EXTENSION
+    OCT 11 1230-1610
+FROM 11/10/2026 12:30 TO 11/10/2026 16:10                                                                           B8288/26
+    RFFS CHANGED TO CAT 6
+FROM 11/10/2026 12:30 TO 11/10/2026 16:10                                                                           B8289/26
+    AD HR OF OPERATION EXTENSION, PUBLIC USE ACT
+    OCT 11 1230-1630
+                                                                ---
+
+
+
+        1 /9                                                                                       Sunday 11/10/2026 13:21 UTC
+                                                        ---
+                                                   LEVT VITORIA
+                                                        ---
+                                                       MET
+                                                        ---
+    METAR LEVT 111300Z 13002KT 9999 BKN048 22/11 Q1016
+    TAF LEVT 111100Z 1112/1212 VRB03KT 9999 FEW060 TX23/1113Z
+    TN10/1203Z PROB30 1112/1115 34010KT PROB40 1115/1120 02010KT
+    PROB40 TEMPO 1120/1209 3000 BR BKN005 PROB30 1200/1206 0800
+    FG BKN001
+                                                        ---
+                                                      NOTAM
+FROM 24/09/2026 16:45 TO 21/10/2026 22:00               ---                            A6688/26
+    VFR/IFR TRAINING FLT NOT ALLOWED DURING FOLLOWING TIME SLOTS:
+    MON 0000-SR/ SS-2200
+    TUE, WED, THU, FRI 0100-SR/ SS-2200
+    SUN 2200-2359
+FROM 01/10/2026 00:00 TO 14/10/2026 23:59                                              A5785/26
+    TRIGGER NOTAM -PERM AIRAC AIP AMDT 09/26 WEF 01-OCT-26.
+    VITORIA AD
+    - CORRECTION OF OBSTACLES IN ITEM 10.
+    - ATS AIRSPACE: HOURS OF APPLICABILITY.
+                                                        ---
+                                            LEVD VALLADOLID/VILLANUBLA
+                                                        ---
+                                                       MET
+                                                        ---
+    METAR LEVD 111300Z 26007KT 210V320 CAVOK 23/10 Q1017 NOSIG
+    TAF LEVD 110800Z 1109/1209 VRB04KT CAVOK TX23/1115Z TN09/1206Z
+                                                        ---
+                                                      NOTAM
+FROM 01/10/2026 00:00 TO 14/10/2026 23:59               ---                            B6850/26
+    TRIGGER NOTAM -PERM AIRAC AIP AMDT 09/26 WEF 01-OCT-26.
+    VALLADOLID/VILLANUBLA AD
+    - OPERATIONAL HOURS:
+    - AIRPORT AND REMARKS.
+    - LOCAL AERODROME REGULATIONS:
+    - RESTRICTIONS TO OPERATIONS.
+FROM 05/10/2026 07:07 TO 01/01/2027 19:15 EST                                          B8143/26
+    AD HOURS OF OPERATION:
+
+    CIV: SUMMER 0630-1915
+         WINTER 0730-2015
+
+    MIL: SUMMER 0600-1915
+         WINTER 0700-2015
+
+    OTHER HR DEPENDIG ON THE TRAINING PERIOD
+                                                        ---
+                                                  LERJ LOGRONO
+                                                        ---
+                                                       MET
+                                                        ---
+ UNAVAILABLE
+   UNAVAILABLE
+                                                        ---
+                                                      NOTAM
+                                                        ---
+
+
+        2 /9                                                             Sunday 11/10/2026 13:21 UTC
+                                                                           ---
+FROM 13/07/2026 09:52 TO PERM                                              ---                 B6044/26
+    REF AD 2 LERJ VAC 1.1 WEF 09-JUL-26 (AIRAC AMDT 06/26)
+    AT CORRIDOR W, DEPARTURE ALTITUDE:
+    -WHERE IT STATES: 4500
+    -IT SHOULD STAY: 4000
+FROM 01/10/2026 00:00 TO 14/10/2026 23:59                                                      B6844/26
+    TRIGGER NOTAM -PERM AIRAC AIP AMDT 09/26 WEF 01-OCT-26.
+    LOGRONO AD
+    - EXTENSION OF THE PPR REQUIREMENT TO FLIGHT
+    SCHOOLS.
+    - VAC CHART: CORRECTION OF THE ALTITUDE OF THE
+    DEPARTURE BY W ROUTE.
+                                                                           ---
+                                                                  LELN LEON
+                                                                           ---
+                                                                          MET
+                                                                           ---
+    METAR LELN 111300Z 18004KT 080V210 9999 FEW040 21/10 Q1017
+    TAF LELN 110800Z 1109/1209 VRB04KT CAVOK TX23/1115Z TN08/1206Z
+    PROB30 TEMPO 1115/1119 27010KT
+                                                                           ---
+                                                                      NOTAM
+FROM 06/11/2024 11:10 TO 05/02/2025 23:59 EST                              ---                 B7951/24
+    RWY23 SEQUENCE FLASHING APPROACH LIGHT SYSTEM U/S
+FROM 04/02/2026 11:30 TO 04/05/2026 11:30 EST                                                  B0895/26
+    MIL FUEL AVBL 1HR PPR SAT, SUN AND HOL
+FROM 04/05/2026 08:52 TO 04/08/2026 23:59 EST                                                  B4003/26
+    LEON APP FREQ 121.280C U/S
+FROM 03/08/2026 07:47 TO 03/11/2026 23:59 EST                                                  B6512/26
+    POSSIBLE DLA ARR/DEP DUE TO WIP ON RWY05/23 AND STRIP
+FROM 29/09/2026 08:58 TO 01/11/2026 19:00 EST                                                  B7963/26
+    CAUTION DUE TO FOD (FOREIGN OBJECT
+    DEBRIS) ON THE RWY05/23
+                                                                           ---
+
+                                              WARNINGS AERODROMES
+                                                                           ---
+                                                      LEBG BURGOS/VILLAFRIA
+                                                                        ---
+                                                                      NOTAM
+                                                                           ---
+ NIL
+                                                                           ---
+                                                               LEVT VITORIA
+                                                                           ---
+                                                                      NOTAM
+                                                                         ---
+Please, see this NOTAM in the chapter of Special Areas Activity UAS VITORIA                    R2613/26
+
+Please, see this NOTAM in the chapter of Special Areas Activity RPA LEVT                       R3241/26
+
+Please, see this NOTAM in the chapter of Special Areas Activity VITORIA                        R3459/26
+                                                                           ---
+                                                 LEVD VALLADOLID/VILLANUBLA
+                                                                        ---
+                                                                      NOTAM
+                                                                           ---
+ NIL
+
+         3 /9                                                                    Sunday 11/10/2026 13:21 UTC
+                                                                         ---
+                                                              LERJ LOGRONO
+                                                                         ---
+                                                                      NOTAM
+Please, see this NOTAM in the chapter of Special Areas Activity LA RIOJA ---                        R3195/26
+                                                                         ---
+                                                                 LELN LEON
+                                                                        ---
+                                                                      NOTAM
+                                                                         ---
+ NIL
+                                                                         ---
+
+                                               SPECIAL AREAS ACTIVITY
+                           For detailed information about Special Areas consult AIP ENR 5.1
+                                                                         ---
+                                                                      LECM
+                                                                         ---
+                                                                GMP21 - GMP21
+WITH ACTIVITY PERIOD: 0000-2359                                          ---                        AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 240
+                                                                         ---
+                                                          LEBAPJA001 - CORDOBA
+WITH ACTIVITY PERIOD: APR-OCT 0700-1800                                  ---                        AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 100
+
+WITH ACTIVITY PERIOD: JAN-MAR NOV DEC 0830-1930                                                     AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 100
+                                                                         ---
+                                                   LECIPJA001 - SANTA CILIA DE JACA
+WITH ACTIVITY PERIOD: SR-SS                                              ---                        AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 145
+                                                                         ---
+                                                        LED100 - ROTA HEL (CADIZ)
+WITH ACTIVITY PERIOD: 0000-2359                                          ---                        AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 30
+                                                                         ---
+                                            LED35A - CHINCHILLA SECTOR A (ALBACETE)
+WITH ACTIVITY PERIOD: SR-SS                                              ---                        AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 35
+                                                                         ---
+                                            LED35B - CHINCHILLA SECTOR B (ALBACETE)
+WITH ACTIVITY PERIOD: SR-SS                                              ---                        AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 180
+                                                                         ---
+                                                       LED48 - SANCHIDRIAN (AVILA)
+WITH ACTIVITY PERIOD: SR-SS                                              ---                        AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 115
+                                                                         ---
+                                                 LED52A - OCANA (TOLEDO) SECTOR A
+WITH ACTIVITY PERIOD: SR-SS                                              ---                        AIP
+VERTICAL LIMITS: LOWER: 10 UPPER: 80
+                                                                         ---
+                                                 LED52B - OCANA (TOLEDO) SECTOR B
+WITH ACTIVITY PERIOD: SR-SS                                              ---                        AIP
+VERTICAL LIMITS: LOWER: 10 UPPER: 95
+                                                                         ---
+                                                 LED52C - OCANA (TOLEDO) SECTOR C
+WITH ACTIVITY PERIOD: SR-SS                                              ---                        AIP
+VERTICAL LIMITS: LOWER: 65 UPPER: 95
+
+
+
+         4 /9                                                                         Sunday 11/10/2026 13:21 UTC
+                                                           ---
+                                                LED55A - TOLEDO SECTOR A
+WITH ACTIVITY PERIOD: SR-SS                                ---                                   AIP
+VERTICAL LIMITS: LOWER: 10 UPPER: 40
+                                                           ---
+                                                LED55B - TOLEDO SECTOR B
+WITH ACTIVITY PERIOD: SR-SS                                ---                                   AIP
+VERTICAL LIMITS: LOWER: 10 UPPER: 60
+                                                           ---
+                                             LED56 - ESTEPONA S. (MALAGA)
+WITH ACTIVITY PERIOD: 0000-2359                            ---                                   AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 10
+                                                           ---
+                                  LED70A - SAN GREGORIO, SECTOR A (ZARAGOZA)
+WITH ACTIVITY PERIOD: 0000-2359                            ---                                   AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 33
+                                                           ---
+                                  LED70B - SAN GREGORIO, SECTOR B (ZARAGOZA)
+WITH ACTIVITY PERIOD: 0000-2359                            ---                                   AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 197
+                                                           ---
+                                                 LEJUPJA001 - LA JULIANA
+WITH ACTIVITY PERIOD: SR-SS                                ---                                   AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 150
+                                                           ---
+                                                LEOSPJA001 - LOS OTEROS
+WITH ACTIVITY PERIOD: JAN-MAR NOV DEC SAT SUN 0830-SS      ---                                   AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 130
+
+WITH ACTIVITY PERIOD: APR-OCT SAT SUN 0730-SS                                                    AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 130
+                                                           ---
+                                                   LEOTPJA001 - ONTUR
+WITH ACTIVITY PERIOD: SR-SS                                ---                                   AIP
+VERTICAL LIMITS: LOWER: 20 UPPER: 145
+                                                           ---
+                                                   LEP118 - EL PLANTIO
+WITH ACTIVITY PERIOD: 0000-2359                            ---                                   AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 999
+                                                           ---
+                                            LEP139 - TRILLO (GUADALAJARA)
+WITH ACTIVITY PERIOD: 0000-2359                            ---                                   AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 40
+                                                           ---
+                                        LEP140 - JOSE CABRERA (GUADALAJARA)
+WITH ACTIVITY PERIOD: 0000-2359                            ---                                   AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 40
+                                                           ---
+                                             LEP141 - ALMARAZ (CACERES)
+WITH ACTIVITY PERIOD: 0000-2359                            ---                                   AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 60
+                                                           ---
+                                       LEP142 - SANTA MARIA DE GARONA (BURGOS)
+WITH ACTIVITY PERIOD: 0000-2359                            ---                                   AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 40
+                                                           ---
+                                 LEP161 - CENTRO FORMACION C. N. POLICIA (AVILA)
+WITH ACTIVITY PERIOD: 0000-2359                            ---                                   AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 50
+                                                           ---
+
+
+        5 /9                                                                       Sunday 11/10/2026 13:21 UTC
+                                                          ---
+                                  LEP162 - PALACIO REAL Y CAMPO DEL MORO (MADRID)
+WITH ACTIVITY PERIOD: 0000-2359                           ---                                        AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 40
+                                                          ---
+                                         LER110 - GUADAHORTUNA (GRANADA)
+WITH ACTIVITY PERIOD: 0000-2359                           ---                                        AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 65
+                                                          ---
+                                              LER111 - MOTRIL (GRANADA)
+WITH ACTIVITY PERIOD: 0000-2359                           ---                                        AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 65
+                                                          ---
+                                                    LER12 - CEUTA
+WITH ACTIVITY PERIOD: 0000-2359                           ---                                        AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 999
+                                                          ---
+                   LER144 - PARQUE NACIONAL PICOS DE EUROPA (ASTURIAS CANTABRIA LEON)
+WITH ACTIVITY PERIOD: 0000-2359                           ---                                        AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 145
+                                                          ---
+                           LER146 - PARQUE NACIONAL DE CABANEROS (TOLEDO, C.REAL)
+WITH ACTIVITY PERIOD: 0000-2359                           ---                                        AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 120
+                                                          ---
+                           LER147 - PARQUE NACIONAL DE LAS TABLAS DE DAIMIEL (C.REA
+WITH ACTIVITY PERIOD: 0000-2359                           ---                                        AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 100
+                                                          ---
+                        LER152 - PARQUE NACIONAL DE ORDESA Y MONTE PERDIDO NORTE
+WITH ACTIVITY PERIOD: 0000-2359                           ---                                        AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 210
+                                                          ---
+                        LER154 - PARQUE NACIONAL DE DONANA (CADIZ, HUELVA, SEVILLA)
+WITH ACTIVITY PERIOD: 0000-2359                           ---                                        AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 60
+                                                          ---
+                         LER155 - PARQUE NACIONAL DE SIERRA NEVADA OESTE (ALMERIA
+WITH ACTIVITY PERIOD: 0000-2359                           ---                                        AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 130
+                                                          ---
+                          LER156 - PARQUE NACIONAL DE SIERRA NEVADA ESTE (ALMERIA
+WITH ACTIVITY PERIOD: 0000-2359                           ---                                        AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 100
+                                                          ---
+                           LER157 - P.N.ISLAS ATLANTICAS. CORTEGADA, MALVEIRAS Y OT
+WITH ACTIVITY PERIOD: 0000-2359                           ---                                        AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 40
+                                                          ---
+                            LER158 - P.N.ISLAS ATLANTICAS. ISLA DE SALVORA E ISLOTES
+WITH ACTIVITY PERIOD: 0000-2359                           ---                                        AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 40
+                                                          ---
+                                  LER159 - P.N.ISLAS ATLANTICAS. ISLAS DE ONS Y ONZA
+WITH ACTIVITY PERIOD: 0000-2359                           ---                                        AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 40
+                                                          ---
+                                       LER160 - P.N.ISLAS ATLANTICAS. ISLAS CIES
+WITH ACTIVITY PERIOD: 0000-2359                           ---                                        AIP
+
+
+        6 /9                                                                           Sunday 11/10/2026 13:21 UTC
+                                                          ---
+VERTICAL LIMITS: LOWER: 0 UPPER: 40                       ---                                   AIP
+                                                          ---
+                               LER163 - PALACIO REAL Y CAMPO DEL MORO (MADRID)
+WITH ACTIVITY PERIOD: 0000-2359                           ---                                   AIP
+VERTICAL LIMITS: LOWER: 40 UPPER: 999
+                                                          ---
+                                              LER164 - ALGECIRAS (CADIZ)
+WITH ACTIVITY PERIOD: 0000-2359                           ---                                   AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 300
+                                                          ---
+                              LER170 - PARQUE NACIONAL DE MONFRAGÜE (CACERES)
+WITH ACTIVITY PERIOD: 0000-2359                           ---                                   AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 90
+                                                          ---
+                       LER172 - PARQUE NACIONAL DE LA SIERRA DE LAS NIEVES (MALAGA)
+WITH ACTIVITY PERIOD: 0000-2359                           ---                                   AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 96
+                                                          ---
+                                              LER43 - TORRIJOS (TOLEDO )
+WITH ACTIVITY PERIOD: 0700-1400                           ---                                   AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 50
+                                                          ---
+                                       LER57 - LAGUNA FUENTE DE PIEDRA (MALAGA)
+WITH ACTIVITY PERIOD: 0000-2359                           ---                                   AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 60
+                                                          ---
+                                                     LER72 - CADIZ
+WITH ACTIVITY PERIOD: 0000-2359                           ---                                   AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 60
+                                                          ---
+                                             LER76E - EL FERROL, SECTOR E
+WITH ACTIVITY PERIOD: 0000-2359                           ---                                   AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 200
+                                                          ---
+                                             LER76W - EL FERROL. SECTOR W
+WITH ACTIVITY PERIOD: 0000-2359                           ---                                   AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 300
+                                                          ---
+                                              LER93 - MARISMA DE HUELVA
+WITH ACTIVITY PERIOD: 0000-2359                           ---                                   AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 60
+                                                          ---
+                                        LER99A - AGONCILLO (LOGRONO). SECTOR A
+WITH ACTIVITY PERIOD: 0000-2359                           ---                                   AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 50
+                                                          ---
+                                        LER99B - AGONCILLO (LOGRONO). SECTOR B
+WITH ACTIVITY PERIOD: 0000-2359                           ---                                   AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 70
+                                                          ---
+                                        LER99C - AGONCILLO (LOGRONO). SECTOR C
+WITH ACTIVITY PERIOD: 0000-2359                           ---                                   AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 60
+                                                          ---
+                                          LETCPJA001 - MATILLA DE LOS CANOS
+WITH ACTIVITY PERIOD: SR-SS                               ---                                   AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 20
+                                                          ---
+
+
+        7 /9                                                                      Sunday 11/10/2026 13:21 UTC
+                                                            ---
+                                            LETCPJA002 - MATILLA DE LOS CANOS
+WITH ACTIVITY PERIOD: SR-SS                                 ---                                 AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 145
+                                                            ---
+                                            LETCPJA003 - MATILLA DE LOS CANOS
+WITH ACTIVITY PERIOD: SR-SS                                 ---                                 AIP
+VERTICAL LIMITS: LOWER: 145 UPPER: 180
+                                                            ---
+                                            LEZSPJA001 - CHOZAS DE ABAJO (LEON)
+WITH ACTIVITY PERIOD: JAN-MAR NOV DEC 0830-2000             ---                                 AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 130
+
+WITH ACTIVITY PERIOD: APR-OCT 0730-1900                                                         AIP
+VERTICAL LIMITS: LOWER: 0 UPPER: 130
+                                                            ---
+                                                         LA RIOJA
+FROM 23/09/2026 06:00 TO 26/10/2026 17:00                   ---                                 R3195/26
+WITH ACTIVITY PERIOD: 0600-1700
+VERTICAL LIMITS: LOWER: 0 UPPER: 1
+    UNMANNED ACFT FLYING WI COORD:
+    422655N 0021835W - 422655N 0021832W
+    422654N 0021828W - 422653N 0021827W
+    422651N 0021828W - 422652N 0021833W
+    422653N 0021836W - 422655N 0021835W
+                                                            ---
+                                                         RPA LEVT
+FROM 14/09/2026 05:45 TO 11/12/2026 16:36                   ---                                 R3241/26
+WITH ACTIVITY PERIOD: SR-SS
+VERTICAL LIMITS: LOWER: 0 UPPER: 3
+    UNMANNED ACFT WILL TAKE PLACE WI 310M RADIUS CENTRED ON
+    COORD 425059.9N 0024500.9W
+                                                            ---
+                                                       UAS VITORIA
+FROM 20/07/2026 08:00 TO 16/10/2026 20:00                   ---                                 R2613/26
+WITH ACTIVITY PERIOD: 0800-2000
+VERTICAL LIMITS: LOWER: 0 UPPER: 4
+    UNMANNED ACFT FLYING WI COORD:
+    425118N 0024415W - 425052N 0024441W - 425050N 0024458W -
+    425113N 0024456W - 425118N 0024415W
+                                                            ---
+                                                         VITORIA
+FROM 24/09/2026 09:30 TO 11/10/2026 20:00                   ---                                 R3459/26
+WITH ACTIVITY PERIOD: 0930-2000
+VERTICAL LIMITS: LOWER: 0 UPPER: 3
+    UNMANNED ACFT WILL TAKE PLACE WI COORD:
+    425110N 0024424W - 425058N 0024436W - 425057N 0024444W -
+    425108N 0024446W - 425110N 0024424W
+                                                            ---
+
+                                   MISCELLANEOUS AERODROMES
+                                                            ---
+                                                LEBG BURGOS/VILLAFRIA
+                                                            ---
+                                                          NOTAM
+FROM 30/09/2026 16:00 TO 29/12/2026 23:59 EST               ---                                 B8013/26
+    OBST LGT LEBG-OBS-00489-000-2023 (WINDMILL)
+    HGT 123.562M, LOCATED AT COORD 421618.96N 0033725.95W U/S
+                                                            ---
+                                                      LEVT VITORIA
+                                                            ---
+
+
+        8 /9                                                                      Sunday 11/10/2026 13:21 UTC
+                                                        ---
+                                                        ---
+                                                      NOTAM
+FROM 24/08/2026 06:00 TO 24/10/2026 16:00               ---                            A5743/26
+    CRANE ERECTED MAX HGT 70M AT COORD: 425119N 0024309W
+                                                        ---
+                                            LEVD VALLADOLID/VILLANUBLA
+                                                        ---
+                                                      NOTAM
+FROM 21/08/2026 10:31 TO 19/11/2026 20:15               ---                            B6902/26
+    START-UP OR ENGINE RUNNING AT STAND G4 NOT PERMITTED
+    DURING PASSENGER BOARDING/DISEMBARKING AT STAND 3
+FROM 06/10/2026 12:04 TO 16/10/2026 19:15                                              B8196/26
+    CIV TWY EDGE LIGHTS U/S
+                                                        ---
+                                                  LERJ LOGRONO
+                                                        ---
+                                                      NOTAM
+                                                        ---
+ NIL
+                                                        ---
+                                                    LELN LEON
+                                                        ---
+                                                      NOTAM
+                                                        ---
+ NIL
+
+                                                 End of Bulletin
+
+
+
+
+        9 /9                                                             Sunday 11/10/2026 13:21 UTC
+
