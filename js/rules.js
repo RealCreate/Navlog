@@ -15,7 +15,61 @@ export const CLOSING_LOCAL = {
   LEBG: 'max 23:00 (depends on extension agreement)',
   LEVT: 'H24', LEVD: '21:15', LEZG: '23:00', LEXJ: '23:00', LEPP: '23:45', LELN: '21:00', LEBB: '23:30',
 };
-export const NO_REFUEL = ['LELN'];
+// AIP AD 2.4: no AVGAS 100LL (LELN military F-34 only, LEHC JET A-1 only).
+export const NO_REFUEL = ['LELN', 'LEHC'];
+
+/**
+ * AIP AD 2 notes for the school's VFR aerodromes (AD 2.3 hours, AD 2.4 fuel, AD 2.20 local
+ * regulations), checked on the AIRAC in force on 11 Oct 2026. `fuel`: AVGAS 100LL available.
+ * Each note: { text, level ('bad'|'warn'|'info'), roles (dep/arr/alt; default all), when(t) }.
+ */
+const weekday = (t) => { const d = t.getUTCDay(); return d >= 1 && d <= 5; };
+export const AIP_NOTES = {
+  LEBG: { fuel: '100LL (fuelling hours AD 2.3; other hours PPR)', notes: [
+    { text: 'Flight plan and radio mandatory in public and restricted-use hours (AD 2.20)' },
+    { text: 'During AFIS hours no more than one aircraft doing touch-and-go at a time (AD 2.20)', roles: ['arr'] },
+  ] },
+  LERJ: { fuel: '100LL — PPR, TEL +34 649 462 986 (AD 2.4)', notes: [
+    { text: 'Flight plan addressed to LERJZTZX and LELOZTZX (AD 2.20)', roles: ['dep', 'arr'] },
+  ] },
+  LEVT: { fuel: '100LL (SLCA +34 680 621 455)', notes: [
+    { text: 'Request start-up clearance from TWR; backtrack not authorised (AD 2.20)', roles: ['dep'] },
+  ] },
+  LEVD: { fuel: '100LL (civil)', notes: [
+    { text: 'Civil training flights: PPR at least 72 h before (PREPARACIÓN_VUELOS_LEVD@mde.es, ala37_ATC@mde.es) (AD 2.20)', level: 'warn', roles: ['arr', 'alt'] },
+    { text: 'No practice approaches or touch-and-go; landing only with a flight plan to LEVD (AD 2.20)', roles: ['arr', 'alt'] },
+  ] },
+  LELN: { fuel: null, notes: [
+    { text: 'No AVGAS (military F-34 only, AD 2.4)', roles: ['arr', 'alt'] },
+    { text: 'Approaches / touch-and-go only with an accepted flight plan to LELN (AD 2.20)', roles: ['arr', 'alt'] },
+  ] },
+  LEPP: { fuel: '100LL (fuelling hours AD 2.3, Exolum +34 948 168 781)', notes: [
+    { text: 'Hold over N, E or W if TWR says so before CTR entry (VAC)', roles: ['arr', 'alt'] },
+  ] },
+  LESO: { fuel: '100LL (Exolum +34 943 668 538)', notes: [
+    { text: 'Training / general aviation: apron clearance from LESO Operations Office before the flight (OperacionesEAS@aena.es, +34 943 668 504) — flights without it are rejected (AD 2.20)', level: 'warn', roles: ['arr', 'alt'] },
+    { text: 'Engines off at the GA engine shutdown area, aircraft towed to the stand; departures start up there (AD 2.20)' },
+  ] },
+  LEXJ: { fuel: '100LL (Exolum +34 942 253 414)', notes: [
+    { text: 'Request start-up clearance from ATC, ready to start within 5 min (AD 2.20)', roles: ['dep'] },
+    { text: 'Ground handling mandatory if anyone goes to the terminal; school operations only as commercial traffic allows, AENA training fees (AD 2.20)', roles: ['arr', 'alt'] },
+  ] },
+  LEHC: { fuel: null, notes: [
+    { text: 'No AVGAS (JET A-1 only, AD 2.4)', roles: ['arr', 'alt'] },
+    { text: 'Flight plan and radio mandatory; approaches / touch-and-go only with destination LEHC; school flights not on RWY 12L/30R (AD 2.20)', roles: ['arr', 'alt'] },
+  ] },
+  LESA: { fuel: 'AVGAS (civil)', notes: [
+    { text: 'VFR and school flights not cleared Monday–Friday unless a public holiday (AD 2.20)', level: 'bad', when: weekday, roles: ['arr', 'alt'] },
+    { text: 'Practice approaches / landings only on weekends and holidays, request 72 h before (AD 2.20)', roles: ['arr', 'alt'] },
+  ] },
+};
+
+/** AIP notes that apply to an aerodrome in a role ('dep' | 'arr' | 'alt') at time t. */
+export function aipNotes(icao, role, t) {
+  const a = AIP_NOTES[icao];
+  if (!a) return [];
+  return a.notes.filter((n) => (!n.roles || n.roles.includes(role)) && (!n.when || n.when(t))).map((n) => ({ level: n.level || 'info', text: `${icao}: ${n.text}` }));
+}
 
 // LEBG / LERJ airport briefings (SOP2507 rev 2.2, SOP2509 rev 2.3): aerodrome hours in UTC.
 // Index 0 = Monday … 6 = Sunday. Arrays hold [open, close] pairs.
@@ -27,6 +81,21 @@ export const HOURS_UTC = {
     winter: { open: H('07:00 08:30 08:30 07:00 08:30 08:30 08:30'), close: H('19:00 18:00 18:00 19:00 18:00 17:30 18:00'),
       afis: [H('09:30 09:30 09:30 09:30 09:30 - -'), H('17:00 17:00 17:00 17:00 17:00 - -')] },
   },
+  // AIP AD 2.3 (AIRAC in force 11 Oct 2026), civil hours; same every day unless noted.
+  LEVD: { summer: { open: H('06:00 06:00 06:00 06:00 06:00 06:30 06:30'), close: H('19:15 19:15 19:15 19:15 19:15 18:30 18:30') },
+    winter: { open: H('07:00 07:00 07:00 07:00 07:00 07:30 07:30'), close: H('20:15 20:15 20:15 20:15 20:15 19:30 19:30') } },
+  LELN: { summer: { open: H('07:30 07:30 07:30 07:30 07:30 07:30 07:30'), close: H('19:00 19:00 19:00 19:00 19:00 19:00 19:00') },
+    winter: { open: H('08:30 08:30 08:30 08:30 08:30 08:30 08:30'), close: H('20:00 20:00 20:00 20:00 20:00 20:00 20:00') } },
+  LEPP: { summer: { open: H('04:30 04:30 04:30 04:30 04:30 04:30 04:30'), close: H('21:45 21:45 21:45 21:45 21:45 21:45 21:45') },
+    winter: { open: H('05:30 05:30 05:30 05:30 05:30 05:30 05:30'), close: H('22:45 22:45 22:45 22:45 22:45 22:45 22:45') } },
+  LESO: { summer: { open: H('05:30 05:30 05:30 05:30 05:30 05:30 05:30'), close: H('19:45 19:45 19:45 19:45 19:45 19:45 19:45') },
+    winter: { open: H('06:30 06:30 06:30 06:30 06:30 06:30 06:30'), close: H('20:45 20:45 20:45 20:45 20:45 20:45 20:45') } },
+  LEXJ: { summer: { open: H('04:30 04:30 04:30 04:30 04:30 04:30 04:30'), close: H('21:00 21:00 21:00 21:00 21:00 21:00 21:00') },
+    winter: { open: H('05:30 05:30 05:30 05:30 05:30 05:30 05:30'), close: H('22:00 22:00 22:00 22:00 22:00 22:00 22:00') } },
+  LEHC: { summer: { open: H('07:00 07:00 07:00 07:00 07:00 07:00 07:00'), close: H('17:00 17:00 17:00 17:00 17:00 17:00 17:00') },
+    winter: { open: H('08:00 08:00 08:00 08:00 08:00 08:00 08:00'), close: H('16:00 16:00 16:00 16:00 16:00 16:00 16:00') } },
+  LESA: { summer: { open: H('08:00 08:00 08:00 08:00 08:00 08:00 08:00'), close: H('19:00 19:00 19:00 19:00 19:00 19:00 19:00') },
+    winter: { open: H('07:30 07:30 07:30 07:30 07:30 07:30 07:30'), close: H('16:30 16:30 16:30 16:30 16:30 16:30 16:30') } },
   LERJ: {
     // Sunday has a midday closure: 13:15–14:15 (summer) / 14:15–15:15 (winter)
     summer: { open: H('05:25 05:25 05:25 05:25 05:25 06:30 08:30'), close: H('20:00 20:00 20:00 20:00 20:00 17:30 19:30'), gapSun: ['13:15', '14:15'] },

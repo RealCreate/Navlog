@@ -11,7 +11,7 @@ import { fetchWeather, assess, metarSummary, crosswind } from './weather.js';
 import { performance, pressureAlt, isaTemp, FT_PER_M } from './perf.js';
 import { MB_TYPES, computeMb, fmtMoment, cgLimitsAt, KG_TO_LB } from './mb.js';
 import { zl, utc, local } from './time.js';
-import { APPROVED, IFR_ONLY, EASY_FIRST, FULL_STOP, CLOSING_LOCAL, NO_REFUEL, FREQS, aerodromeOpen, airspaceCrossings, crossingIssue, buildFpl, departureBriefing, arrivalBriefing, temThreats } from './rules.js';
+import { APPROVED, IFR_ONLY, EASY_FIRST, FULL_STOP, CLOSING_LOCAL, NO_REFUEL, FREQS, AIP_NOTES, aipNotes, aerodromeOpen, airspaceCrossings, crossingIssue, buildFpl, departureBriefing, arrivalBriefing, temThreats } from './rules.js';
 import { listPlans, savePlan, deletePlan, getPlan, planFromPdf, embedPlan } from './plans.js';
 import { sunTimes } from './sun.js';
 
@@ -202,8 +202,16 @@ const pointsLayer = L.layerGroup();
 function buildPoints() {
   pointsLayer.clearLayers();
   const z = map.getZoom();
+  // A reporting point shared by two aerodromes (e.g. LESA N = LEUN N) gets one marker: the
+  // school's aerodrome's one.
+  const vrpAt = new Map();
+  for (const p of POINTS) if (p.type === 'vrp') {
+    const k = `${p.lat.toFixed(4)},${p.lon.toFixed(4)}`, cur = vrpAt.get(k);
+    if (!cur || (APPROVED.includes(p.ad) && !APPROVED.includes(cur.ad))) vrpAt.set(k, p);
+  }
   POINTS.forEach((p) => {
     if (p.type === 'vrp' && z < 9) return;
+    if (p.type === 'vrp' && vrpAt.get(`${p.lat.toFixed(4)},${p.lon.toFixed(4)}`) !== p) return;
     const ad = adByIcao(p.ad);
     const minor = p.type === 'ad' && ad && ad.public === false;
     if (minor && z < 9) return;
@@ -254,7 +262,9 @@ function nearestRef(latlng) {
   for (const p of POINTS) {
     if (p.type === 'vrp' && map.getZoom() < 9) continue;
     const d = pt.distanceTo(map.latLngToContainerPoint([p.lat, p.lon]));
-    if (d < bestD) { bestD = d; best = p; }
+    // shared reporting points (e.g. LESA N = LEUN N): the school's aerodrome wins
+    const tie = best && Math.abs(d - bestD) < 1 && APPROVED.includes(p.ad) && !APPROVED.includes(best.ad);
+    if (d < bestD - (best ? 1 : 0) || tie || (!best && d < bestD)) { bestD = d; best = p; }
   }
   if (best || !state.view.names) return best;
   const z = map.getZoom(), minZ = [6, 8, 10];
@@ -1290,7 +1300,12 @@ function planIssues() {
   // solo + aerodrome specifics
   const solo = soloEntryIssue(); if (solo) issues.push({ level: 'bad', text: solo });
   if (dest && FULL_STOP.includes(dest.icao)) issues.push({ level: 'info', text: `${dest.icao} requires a full-stop landing` });
-  if (dest && NO_REFUEL.includes(dest.icao)) issues.push({ level: 'info', text: `${dest.icao}: no refuelling available` });
+  // AIP AD 2 notes (fuel, local regulations, school-flight restrictions)
+  const seen = new Set();
+  for (const [ad, role, t] of [[dep, 'dep', to], [dest, 'arr', ldg], [alt, 'alt', altArr]]) {
+    if (!ad) continue;
+    for (const n of aipNotes(ad.icao, role, t)) if (!seen.has(n.text)) { seen.add(n.text); issues.push(n); }
+  }
   // cruising levels
   issues.push(...seraIssues('main'));
   // airspace along the route
@@ -1373,6 +1388,41 @@ async function fetchChartBytes(c) {
     try { const r = await fetch(proto + u, { mode: 'cors' }); if (r.ok) return new Uint8Array(await r.arrayBuffer()); } catch { /* blocked or missing */ }
   }
   return null;
+}
+
+/* Surface pressure chart (Briefing List 1A): AEMET OpenData analysis map, with the student's own
+ * free API key kept only in this browser. Without a key: link to AEMET's surface charts page. */
+const AEMET_KEY = 'navlog.aemetKey.v1';
+const AEMET_FRONTS = 'https://www.aemet.es/en/eltiempo/prediccion/mapa_frentes';
+let surface = null; // { at, url (object URL), png (bytes), label } | { at, error }
+const aemetKey = () => { try { return localStorage.getItem(AEMET_KEY) || ''; } catch { return ''; } };
+async function loadSurface(force) {
+  const key = aemetKey();
+  if (!key) return null;
+  if (!force && surface && Date.now() - surface.at < 30 * 60e3) return surface;
+  try {
+    const meta = await (await fetch(`https://opendata.aemet.es/opendata/api/mapasygraficos/analisis?api_key=${encodeURIComponent(key)}`)).json();
+    if (!meta || !meta.datos) throw new Error(meta && meta.descripcion ? meta.descripcion : 'no data');
+    const blob = await (await fetch(meta.datos)).blob();
+    const bmp = await createImageBitmap(blob); // the map is a GIF: redraw it as PNG for the PDF
+    const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height;
+    c.getContext('2d').drawImage(bmp, 0, 0);
+    const png = await new Promise((res) => c.toBlob(res, 'image/png'));
+    if (surface && surface.url) URL.revokeObjectURL(surface.url);
+    surface = { at: Date.now(), url: URL.createObjectURL(png), png: new Uint8Array(await png.arrayBuffer()), label: `Surface pressure analysis · AEMET (fetched ${hhmmZ(new Date())})` };
+  } catch (err) {
+    surface = { at: Date.now(), error: String(err.message || err) };
+  }
+  return surface;
+}
+function surfaceHtml() {
+  const key = aemetKey();
+  const link = `<a href="${AEMET_FRONTS}" target="_blank" rel="noopener">AEMET surface pressure charts ↗</a>`;
+  if (!key) return `<div class="label">${link} (analysis + forecasts). To show the analysis here and in the PDF, paste your free <a href="https://opendata.aemet.es/centrodedescargas/altaUsuario" target="_blank" rel="noopener">AEMET OpenData key</a> — it stays on this device.</div>
+    <div class="row" style="gap:8px;margin-top:8px"><input id="aemetKeyIn" type="password" placeholder="AEMET OpenData API key" autocomplete="off" style="flex:1"><button class="btn" data-act="aemetKeySave">Save</button></div>`;
+  if (!surface) { loadSurface().then(() => { const el = document.getElementById('surfaceBox'); if (el) el.innerHTML = surfaceHtml(); }); return `<div class="label">Loading… · ${link}</div>`; }
+  if (surface.error) return `<div class="label">Could not load the AEMET analysis (${esc(surface.error)}) · ${link} · <a href="#" data-act="aemetKeyClear">change key</a></div>`;
+  return `<figure class="wxchart"><img alt="Surface pressure analysis" src="${surface.url}"><figcaption>${esc(surface.label)} · ${link} · <a href="#" data-act="aemetKeyClear">remove key</a></figcaption></figure>`;
 }
 
 /* ---------------- ICARO NOTAM bulletin (saved PDF, added by the student) ---------------- */
@@ -1487,8 +1537,9 @@ function renderBriefing() {
   }
   const cruise = parseAlt(result.main.rows.find((r) => r.phase === 'cruise')?.alt) || 5500;
   const ch = aemetCharts(flightTime(), cruise);
+  html += `<div class="wx"><div class="wx-head"><b>Surface pressure chart</b><span class="label">AEMET</span></div><div id="surfaceBox">${surfaceHtml()}</div></div>`;
   html += `<div class="wx"><div class="wx-head"><b>SIGWX and wind chart</b><span class="label">AEMET · for your time</span></div><div class="wxcharts">${chartImg(ch.sigwx)}${chartImg(ch.wind)}</div></div>`;
-  html += `</div><p class="note">${esc(B.limits)} Also brief the surface pressure chart. Sources: aviationweather.gov, AEMET (charts load from Spain only; check the validity printed on each chart).</p>`;
+  html += `</div><p class="note">${esc(B.limits)} Sources: aviationweather.gov, AEMET (charts load from Spain only; check the validity printed on each chart).</p>`;
 
   // 2. NOTAMs
   html += `<div class="group-title"><span>2 · NOTAMs</span></div><div class="group">
@@ -1508,6 +1559,7 @@ function renderBriefing() {
   html += `<div class="group-title"><span>4 · Mission objective</span></div><div class="group">
     <div class="wx"><div class="wx-head"><b>Departure briefing</b></div><div id="depBrief">${esc(depText) || '—'}</div></div>${depText ? copyBtn('depBrief') : ''}
     <div class="wx"><div class="wx-head"><b>Arrival briefing</b><span class="label">Phase 1 format</span></div><div id="arrBrief">${esc(arrText) || '—'}</div></div>${arrText ? copyBtn('arrBrief') : ''}
+    <div class="wx"><div class="wx-head"><b>Aerodromes (AIP AD 2)</b></div>${chartAds.map((x) => { const a = AIP_NOTES[x.icao]; const h = aerodromeOpen(x.icao, B.to); return `<div><b>${x.icao}</b> · fuel: ${a ? esc(a.fuel || 'no AVGAS') : 'check AD 2.4'} · ${esc(h.text)} · <a href="${x.ad2}" target="_blank" rel="noopener">AD 2 ↗</a></div>`; }).join('') || '—'}</div>
     <div class="wx"><div class="wx-head"><b>Charts to have in sight</b></div>${chartAds.map((x) => `<a href="${x.vac}" target="_blank" rel="noopener">${x.icao} VAC ↗</a>`).join(' · ') || '—'} · ENAIRE 1:500 000 chart</div>
     <div class="wx"><div class="wx-head"><b>Frequencies</b></div>${esc(B.freq)}</div>
   </div>`;
@@ -1539,6 +1591,17 @@ panels.brief.addEventListener('click', (e) => {
   if (e.target.closest('[data-act=toMb]')) document.querySelector('#modes [data-mode=mb]').click();
   if (e.target.closest('[data-act=briefPdf]')) downloadBriefing();
   if (e.target.closest('[data-act=bulRemove]')) removeBulletin();
+  if (e.target.closest('[data-act=aemetKeySave]')) {
+    const v = (document.getElementById('aemetKeyIn')?.value || '').trim();
+    if (!v) return;
+    try { localStorage.setItem(AEMET_KEY, v); } catch { /* private mode */ }
+    surface = null; document.getElementById('surfaceBox').innerHTML = surfaceHtml();
+  }
+  if (e.target.closest('[data-act=aemetKeyClear]')) {
+    e.preventDefault();
+    try { localStorage.removeItem(AEMET_KEY); } catch { /* ignore */ }
+    surface = null; document.getElementById('surfaceBox').innerHTML = surfaceHtml();
+  }
 });
 panels.brief.addEventListener('change', (e) => {
   const t = e.target;
@@ -1994,7 +2057,9 @@ function missionFigures() {
   for (const leg of m.legs) {
     const i = legChainIndex(leg);
     const prev = i > 0 ? out.get(legsOfChain(leg)[i - 1].id) : null;
-    const fob = i === 0 ? (+leg.fob || +state.flight.fob || 0) : leg.refuel ? cap : prev ? Math.max(0, prev.remaining) : 0;
+    const depIcao = leg.main && leg.main.waypoints[0] && (leg.main.waypoints[0].ref || leg.main.waypoints[0].name);
+    const canRefuel = leg.refuel && !NO_REFUEL.includes(depIcao); // no AVGAS there (AIP AD 2.4)
+    const fob = i === 0 ? (+leg.fob || +state.flight.fob || 0) : canRefuel ? cap : prev ? Math.max(0, prev.remaining) : 0;
     const fig = withLeg(leg, fob, () => {
       const t = flightTime();
       const dep = endpoint('main', 0), dest = endpoint('main', -1), alt = endpoint('alt', -1);
@@ -2114,7 +2179,7 @@ function renderMission() {
 ${planned ? `<div class="label">${f.dep?.icao || '?'} → ${planned ? f.dest?.icao || '?' : leg.target || '?'}${f.alt ? ` · alt ${f.alt.icao}` : leg.altTarget ? ` · alt ${leg.altTarget}` : ''} · ${f.dist} NM · ${fmtHMS(f.timeSec).slice(0, 5)} · T/O ${zl(f.t)} → LDG ${zl(f.ldg)}</div>
       <div class="label">FOB ${f.fob.toFixed(1)} L${i > 0 ? (leg.refuel ? ' (refuel: full tanks)' : ' (carried from the previous leg)') : ''} · trip ${f.trip.toFixed(1)} L · minimum ${f.required} L ${f.fuelOk ? '✓' : '✕'} · M&amp;B ${f.mbOk == null ? '—' : f.mbOk ? '✓' : '✕'}</div>` : ''}
       ${f.issues.length ? `<div class="label warn">${f.issues.map(esc).join('<br>')}</div>` : ''}
-      <div class="row" style="padding:6px 0 0">${i > 0 && m.type === 'tri' ? `<label class="tem-row" style="flex:1"><input type="checkbox" data-refuel="${leg.id}" ${leg.refuel ? 'checked' : ''}><span>Refuel at ${f.dep?.icao || ''}${f.dep && NO_REFUEL.includes(f.dep.icao) ? ' — no refuelling there (AIP)' : ' (only where AVGAS 100LL is available)'}</span></label>` : '<span class="grow"></span>'}
+      <div class="row" style="padding:6px 0 0">${i > 0 && m.type === 'tri' ? `<label class="tem-row" style="flex:1"><input type="checkbox" data-refuel="${leg.id}" ${leg.refuel ? 'checked' : ''}><span>Refuel at ${f.dep?.icao || ''}${f.dep && NO_REFUEL.includes(f.dep.icao) ? ' — no AVGAS there (AIP)' : f.dep && AIP_NOTES[f.dep.icao] ? ` — ${esc(AIP_NOTES[f.dep.icao].fuel)}` : ' (only where AVGAS 100LL is available)'}</span></label>` : '<span class="grow"></span>'}
       <button class="btn small" data-open="${leg.id}">${leg.id === m.active ? 'Edit' : 'Open'}</button></div></div>`;
   }
   html += '</div>';
@@ -2285,12 +2350,23 @@ async function downloadBriefing() {
     } else {
       const p = legPack(); p.withMb = true; packs.push(p);
     }
-    let bulletinAdded = false, chartsMissing = false;
+    let bulletinAdded = false, chartsMissing = false, surfaceAdded = false;
     const addBulletinPages = async () => { if (bulletin && !bulletinAdded) { bulletinAdded = true; await add(b64ToBytes(bulletin.b64)); } };
     if (m) await addBulletinPages();
     for (const p of packs) {
       addBriefingPages(out, F, p.B, p.meta);
       await addBulletinPages();
+      const sf = await loadSurface();
+      if (sf && sf.png && !surfaceAdded) {
+        surfaceAdded = true;
+        try {
+          const img = await out.embedPng(sf.png);
+          const pg = out.addPage([841.89, 595.28]);
+          const k = Math.min(801 / img.width, 540 / img.height);
+          pg.drawImage(img, { x: (841.89 - img.width * k) / 2, y: 18, width: img.width * k, height: img.height * k });
+          pg.drawText(pdfText(sf.label), { x: 20, y: 570, size: 11, font: F.bold });
+        } catch { chartsMissing = true; }
+      }
       if (p.charts) for (const c of [p.charts.sigwx, p.charts.wind]) {
         const bytes = await fetchChartBytes(c);
         if (!bytes) { chartsMissing = true; continue; }

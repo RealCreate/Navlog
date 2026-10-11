@@ -34,3 +34,32 @@ test('VFR flight plan draft', () => {
   assert.match(fpl, /-N0101VFR DCT 4230N00342W DCT/);
   assert.match(fpl, /-LEVT0045 LERJ/);
 });
+
+import { readFileSync } from 'node:fs';
+import { mergeAip, procedureFor, adByIcao } from '../js/data.js';
+import { aipNotes, NO_REFUEL } from '../js/rules.js';
+
+test('VAC procedures for LEPP, LESO, LEXJ, LEHC, LESA', () => {
+  mergeAip(JSON.parse(readFileSync(new URL('../data/aip.json', import.meta.url))));
+  assert.equal(adByIcao('LEPP').freq, 'LEPP:118.200');
+  assert.deepEqual(procedureFor('LEPP', 'N', 'arr').points, ['N']);
+  assert.equal(procedureFor('LEPP', 'E', 'arr').alt, 2500); // 1506 + 1000 AGL max
+  assert.deepEqual(procedureFor('LESO', 'W', 'arr').points, ['W', 'W-1']);
+  assert.equal(procedureFor('LESO', 'S', 'dep').alt, 1000);
+  assert.deepEqual(procedureFor('LEXJ', 'E-1', 'arr').points, ['E-1', 'E-2', 'N-1']);
+  assert.deepEqual(procedureFor('LEXJ', 'W-1', 'arr').points, ['W-1', 'S-2']);
+  assert.deepEqual(procedureFor('LEHC', 'S-1', 'arr').points, ['S-1', 'S']);
+  assert.equal(procedureFor('LEHC', 'W-1', 'arr').alt, 2200); // W route 500 ft AGL max
+  assert.equal(procedureFor('LEHC', 'N', 'arr').alt, 2700);
+  assert.deepEqual(procedureFor('LESA', 'N', 'arr').points, ['N', 'N-1']);
+  assert.equal(procedureFor('LESA', 'E', 'dep').alt, 3500);
+});
+
+test('AIP notes: Salamanca weekdays, no AVGAS at Huesca/León', () => {
+  const mon = new Date(Date.UTC(2026, 9, 12, 10)), sat = new Date(Date.UTC(2026, 9, 17, 10));
+  assert.ok(aipNotes('LESA', 'arr', mon).some((n) => n.level === 'bad'));
+  assert.ok(!aipNotes('LESA', 'arr', sat).some((n) => n.level === 'bad'));
+  assert.ok(NO_REFUEL.includes('LEHC') && NO_REFUEL.includes('LELN'));
+  assert.ok(aipNotes('LEVD', 'arr', mon).some((n) => /PPR/.test(n.text)));
+  assert.equal(aerodromeOpen('LEHC', new Date(Date.UTC(2026, 9, 12, 17, 30))).open, false); // summer closes 17:00Z
+});

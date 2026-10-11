@@ -118,6 +118,29 @@ export const adByIcao = (icao) => AERODROMES.find((a) => a.icao === icao);
  * VFR reporting point and published VFR route within 200 NM of LEBG and LERJ. The hand-checked
  * entries above (LEBG, LEVT, LERJ) keep their values (VAC variation, frequencies).
  */
+// Frequencies of the school's other VFR aerodromes, from their VACs (AIRAC 2025–26).
+const AD_FREQ = {
+  LEPP: ['LEPP:118.200', 'Pamplona APP/TWR 118.200 · GMC 121.705'],
+  LESO: ['LESO:119.855', 'San Sebastián APP/TWR 119.855 · GMC 121.705'],
+  LEXJ: ['LEXJ:118.105', 'Santander TWR 118.105 · APP 118.375 · GMC 121.705 · ATIS 127.530'],
+  LEHC: ['LEHC:128.955', 'Huesca AFIS 128.955 (NO ATS outside AFIS hours, same frequency)'],
+  LESA: ['LESA:118.105', 'Salamanca TWR 118.105 · APP 124.405 · GMC 121.855'],
+};
+
+// Reporting points of those aerodromes as printed on their VACs (the AIP data service sometimes
+// files a shared point under a neighbouring aerodrome, e.g. LESA N under LEUN).
+const V = (id, name, lat, lon) => ({ id, name, ...pt(lat, lon) });
+const VAC_VRPS = {
+  LEPP: [V('N', 'Usetxi', '425628N', '0013243W'), V('E', 'Lizárraga', '424658N', '0012551W'), V('W', 'Zabalza - Arraiza', '424437N', '0015150W')],
+  LESO: [V('E', 'San Juan de Luz', '432302N', '0013945W'), V('S', 'Sumbilla', '430950N', '0014010W'), V('W', 'Ría de Orio', '431750N', '0020800W'), V('W-1', 'Ría de Pasaia', '432030N', '0015550W')],
+  LEXJ: [V('E-1', 'Santoña', '432703N', '0032550W'), V('E-2', 'Cabo de Ajo', '433051N', '0033427W'), V('N-1', 'Santa Marina', '432833N', '0034316W'), V('N-2', 'Cabo de Lata', '432942N', '0034842W'),
+    V('S-1', 'Villacarriedo', '431359N', '0034821W'), V('S-2', 'El Pozón de la Dolores', '432326N', '0035301W'), V('W-1', 'Torrelavega', '432051N', '0040205W'), V('W-2', 'Suances', '432611N', '0040207W')],
+  LEHC: [V('N', 'Castillo de Montearagón', '420914N', '0002008W'), V('E', 'Velillas', '420730N', '0001238W'), V('S', 'Piracés', '420016N', '0001852W'), V('W', 'Embalse de Valdabra', '420447N', '0002607W'),
+    V('W-1', 'Embalse de Tormos', '420603N', '0004304W'), V('SW', 'Torralba de Aragón', '415633N', '0003013W'), V('S-1', 'Sariñena', '414747N', '0000935W')],
+  LESA: [V('N', 'Estación de Huelmos', '410803N', '0054137W'), V('N-1', 'Polideportivo Helmántico', '410016N', '0054020W'), V('E', 'Peñaranda de Bracamonte', '405428N', '0051131W'),
+    V('E-1', 'Ventosa del Río Almar', '405543N', '0052043W'), V('S', 'Alba de Tormes', '404942N', '0053014W')],
+};
+
 export function mergeAip(aip) {
   if (!aip || !aip.aerodromes) return false;
   const known = new Set(AERODROMES.map((a) => a.icao));
@@ -126,10 +149,11 @@ export function mergeAip(aip) {
     AERODROMES.push({
       icao: a.icao, name: titleCase(a.name), lat: a.lat, lon: a.lon,
       elev: a.elev != null ? Math.round(a.elev) : null, var: a.var != null ? Math.round(a.var) : 0,
-      freq: '', freqNote: a.class === 'PÚBLICO' ? 'Public aerodrome — see AD 2 for frequencies' : 'Restricted-use aerodrome — prior permission',
+      freq: AD_FREQ[a.icao] ? AD_FREQ[a.icao][0] : '',
+      freqNote: AD_FREQ[a.icao] ? AD_FREQ[a.icao][1] : a.class === 'PÚBLICO' ? 'Public aerodrome — see AD 2 for frequencies' : 'Restricted-use aerodrome — prior permission',
       vac: `https://aip.enaire.es/AIP/contenido_AIP/AD/AD2/${a.icao}/LE_AD_2_${a.icao}_VAC_1_en.pdf`,
       ad2: `https://aip.enaire.es/AIP/contenido_AIP/AD/AD2/${a.icao}/LE_AD_2_${a.icao}_en.pdf`,
-      public: a.class === 'PÚBLICO', ta: a.ta, vrps: [],
+      public: a.class === 'PÚBLICO', ta: a.ta, vrps: VAC_VRPS[a.icao] ? VAC_VRPS[a.icao].map((v) => ({ ...v })) : [],
     });
     known.add(a.icao);
   }
@@ -273,6 +297,46 @@ export const PROCEDURES = {
     depRoutes: { N: ['N'], S: ['S'], SE: ['SE'] },
     alt: { dep: 4000, arr: 4000 },
     source: 'LELN VAC: circuit at 1000 ft AGL, S and SE join via S-1; with LED7 active only S or SE. Full-stop landing (solo manual)',
+  },
+  // VAC heights are converted with the aerodrome elevation and rounded down to the 100 ft below,
+  // so the planned altitude never exceeds the VAC maximum.
+  // LEPP VAC 1.1 (WEF 22-JAN-26): contact TWR over N (Usetxi), E (Lizárraga) or W (Zabalza-Arraiza),
+  // direct routes, MAX ALT 1000 ft AGL (elev 1506 ft → 2500 ft). Hold over the point if told.
+  LEPP: {
+    routes: { N: ['N'], E: ['E'], W: ['W'] },
+    alt: { dep: 2500, arr: 2500 },
+    source: 'LEPP VAC: contact TWR over N, E or W, request CTR entry, 1000 ft AGL max (2506 ft)',
+  },
+  // LESO VAC 1.1 (WEF 30-OCT-25): contact TWR over S (Sumbilla), W (Ría de Orio) or E (San Juan
+  // de Luz) before the CTR, 1000 ft AGL max (elev 15 ft → 1000 ft). W route via W-1 (Ría de Pasaia).
+  LESO: {
+    routes: { S: ['S'], W: ['W-1', 'W'], E: ['E'] },
+    alt: { dep: 1000, arr: 1000 },
+    source: 'LESO VAC: contact TWR over S, W or E before the CTR, 1000 ft AGL max; W route via W-1',
+  },
+  // LEXJ VAC 1.1 (WEF 14-MAY-26): contact TWR at E-1, E-2, N-2, S-1, W-1, W-2. From E-2 along the
+  // coast to N-2 or N-1 (north visual pattern); from S-1, W-1, W-2 to S-2 (south visual pattern).
+  // CTR SFC–1000 ft AGL, TWR gives the altitude (planned 1000 ft). Departures: GMC assigns the route.
+  LEXJ: {
+    routes: { E: ['N-1', 'E-2', 'E-1'], N: ['N-2'], S: ['S-2', 'S-1'], W: ['S-2', 'W-1'], W2: ['S-2', 'W-2'] },
+    alt: { dep: 1000, arr: 1000 },
+    source: 'LEXJ VAC: TWR gives the altitude (CTR SFC–1000 ft AGL); E-2 → N-1 along the coast, S-1/W-1/W-2 → S-2. Departure route assigned by GMC',
+  },
+  // LEHC VAC 1.1 (WEF 15-MAY-25): enter/leave the FIZ via N, S, E, W, W-1, SW, S-1. MAX ALT 1000 ft
+  // AGL (elev 1769 ft → 2700 ft) unless IFR traffic is reported; W → field MAX 500 ft AGL (2200 ft).
+  // S-1 joins via S, W-1 via W.
+  LEHC: {
+    routes: { N: ['N'], E: ['E'], S: ['S', 'S-1'], W: ['W', 'W-1'], SW: ['SW'] },
+    alt: { dep: 2700, arr: 2700 },
+    altByRoute: { W: { dep: 2200, arr: 2200 } },
+    source: 'LEHC VAC: 1000 ft AGL max (5500 ft AMSL only with IFR traffic reported), W route 500 ft AGL max; notify AFIS before the point',
+  },
+  // LESA VAC 1.1 (WEF 04-SEP-25): North route N–N-1 (road N-630 0.5 NM left), East route E–E-1
+  // (N-501 0.5 NM left), South route S (river Tormes 0.5 NM left); 1000 ft AGL max (2595 → 3500 ft).
+  LESA: {
+    routes: { N: ['N-1', 'N'], E: ['E-1', 'E'], S: ['S'] },
+    alt: { dep: 3500, arr: 3500 },
+    source: 'LESA VAC: call TWR 2 min / 10 NM before the point; 1000 ft AGL max; keep the road/river 0.5 NM on the left',
   },
 };
 
