@@ -87,12 +87,23 @@ export function addBriefingPages(doc, F, B, meta) {
   for (const i of top) W.para(`${i.level === 'bad' ? 'X' : '!'}  ${i.text}`, { size: 9, color: lvl(i.level), x: M + 8, gap: 0 });
   W.y += 4;
 
-  // 1. Weather: status + raw METAR / TAF
+  // 1. Weather, in the Briefing List order: A surface chart, B SIGWX, C wind chart, D METAR, E TAF
   W.heading('1 · Weather');
+  const att = meta.wxAttach;
+  if (att) {
+    for (const [k, name, miss] of [['A', 'Surface pressure chart', 'NOT ATTACHED — AEMET analysis not available'], ['B', 'SIGWX', 'NOT ADDED — add it in step 4 · Briefing'], ['C', 'Wind chart', 'NOT ADDED — add it in step 4 · Briefing']]) {
+      W.row(`${k} · ${name}${att[k] ? ` — ${att[k]}` : ''}`, att[k] ? 'ATTACHED' : 'MISSING', att[k] ? W.green : W.red);
+    }
+  }
+  W.sub('D · METAR', '');
   for (const { ad, role, w, st } of B.wx) {
-    W.sub(`${ad.icao} · ${role}`, st[1], st[0] === 'bad' ? W.red : st[0] === 'warn' ? W.amber : st[0] === 'ok' ? W.green : W.grey);
-    W.mono(w.metar ? w.metar.rawOb : 'METAR —');
-    if (w.taf) W.mono(w.taf.rawTAF);
+    W.row(`${ad.icao} · ${role}`, st[1], st[0] === 'bad' ? W.red : st[0] === 'warn' ? W.amber : st[0] === 'ok' ? W.green : W.grey);
+    W.mono(w.metar ? w.metar.rawOb : 'METAR not available — check ICARO');
+  }
+  W.sub('E · TAF', '');
+  for (const { ad, role, w } of B.wx) {
+    W.row(`${ad.icao} · ${role}`);
+    W.mono(w.taf ? w.taf.rawTAF : 'TAF not available (not every aerodrome issues one) — check ICARO');
   }
 
   // 2. NOTAMs

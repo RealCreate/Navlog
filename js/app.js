@@ -1782,20 +1782,23 @@ function renderBriefing() {
     : `<div class="group"><div class="empty">${result.main.rows.length ? 'No issues found. The final decision stays with you and your instructor.' : 'Plan a route to see the checks.'}</div></div>`;
 
   // 1. Weather
-  html += `<div class="group-title"><span>1 · Weather (METAR / TAF)</span><button class="btn small" data-act="wx">Refresh</button></div><div class="group">`;
+  html += `<div class="group-title"><span>1 · Weather</span><button class="btn small" data-act="wx">Refresh</button></div><div class="group">`;
+  const cruise = parseAlt(result.main.rows.find((r) => r.phase === 'cruise')?.alt) || 5500;
+  const ch = aemetCharts(flightTime(), cruise);
+  // Briefing List order: A surface pressure chart, B SIGWX, C wind chart, D METAR, E TAF
+  html += `<div class="wx"><div class="wx-head"><b>A · Surface pressure chart</b><span class="label">AEMET</span></div><div id="surfaceBox">${surfaceHtml()}</div></div>`;
+  html += `<div class="wx"><div class="wx-head"><b>B · SIGWX</b><span class="label">AEMET low level · for your time</span></div><div class="wxcharts">${wxUploadHtml('sigwx', ch.sigwx)}</div></div>`;
+  html += `<div class="wx"><div class="wx-head"><b>C · Wind chart</b><span class="label">AEMET · for your time and level</span></div><div class="wxcharts">${wxUploadHtml('wind', ch.wind)}</div>
+    <div class="label" style="margin-top:6px">If a chart does not load, save it from <a href="https://ama.aemet.es" target="_blank" rel="noopener">AEMET aviation ↗</a> and add it here — it goes into the briefing PDF.</div></div>`;
+  html += `<div class="wx"><div class="wx-head"><b>D · METAR &nbsp;·&nbsp; E · TAF</b><span class="label">aviationweather.gov</span></div></div>`;
   if (wxState.loading) html += '<div class="empty">Loading METAR and TAF…</div>';
   else if (wxState.err) html += `<div class="empty">Weather unavailable (${esc(wxState.err)}). Check <a href="https://ama.aemet.es/en" target="_blank" rel="noopener">AEMET</a>.</div>`;
   else if (!dep) html += '<div class="empty">Add aerodromes to the route.</div>';
   if (wxState.data) for (const { ad, t, role, w, a, st } of wx) {
     html += `<div class="wx"><div class="wx-head"><b>${ad.icao}</b><span class="label">${role} · ${hhmmZ(t)} ±1 h</span><span class="badge ${st[0]}">${st[1]}</span></div>
       ${w.metar ? `<div class="label" style="font-size:12px">${esc(metarSummary(w.metar))}${a.xw ? ` · best RWY ${a.xw.rwy}: crosswind ${a.xw.xw} kt` : ''}</div><div class="mono">${esc(w.metar.rawOb)}</div>` : '<div class="label">No METAR</div>'}
-      ${w.taf ? `<div class="mono" style="margin-top:4px">${esc(w.taf.rawTAF)}</div>` : ''}</div>`;
+      ${w.taf ? `<div class="mono" style="margin-top:4px">${esc(w.taf.rawTAF)}</div>` : '<div class="label">No TAF</div>'}</div>`;
   }
-  const cruise = parseAlt(result.main.rows.find((r) => r.phase === 'cruise')?.alt) || 5500;
-  const ch = aemetCharts(flightTime(), cruise);
-  html += `<div class="wx"><div class="wx-head"><b>Surface pressure chart</b><span class="label">AEMET</span></div><div id="surfaceBox">${surfaceHtml()}</div></div>`;
-  html += `<div class="wx"><div class="wx-head"><b>SIGWX and wind chart</b><span class="label">AEMET · for your time</span></div><div class="wxcharts">${wxUploadHtml('sigwx', ch.sigwx)}${wxUploadHtml('wind', ch.wind)}</div>
-    <div class="label" style="margin-top:6px">If a chart does not load, save it from <a href="https://ama.aemet.es" target="_blank" rel="noopener">AEMET aviation ↗</a> and add it here — it goes into the briefing PDF.</div></div>`;
   html += `</div><p class="note">${esc(B.limits)} Sources: aviationweather.gov, AEMET (charts load from Spain only; check the validity printed on each chart).</p>`;
 
   // 2. NOTAMs
@@ -2828,38 +2831,40 @@ async function downloadBriefing() {
     } else {
       const p = legPack(); p.withMb = true; packs.push(p);
     }
-    let bulletinAdded = false, chartsMissing = false, surfaceAdded = false;
-    const wxAdded = new Set();
+    let bulletinAdded = false, chartsMissing = false;
+    const once = new Set(); // the surface analysis and the student's own charts go in once per PDF
     const addBulletinPages = async () => { if (bulletin && !bulletinAdded) { bulletinAdded = true; await add(b64ToBytes(bulletin.b64)); } };
-    if (m) await addBulletinPages();
+    const chartPage = async (c) => {
+      try {
+        const img = c.jpg ? await out.embedJpg(c.bytes) : await out.embedPng(c.bytes);
+        const pg = out.addPage([841.89, 595.28]);
+        const k = Math.min(801 / img.width, 540 / img.height);
+        pg.drawImage(img, { x: (841.89 - img.width * k) / 2, y: 18, width: img.width * k, height: img.height * k });
+        pg.drawText(pdfText(c.title), { x: 20, y: 570, size: 11, font: F.bold });
+        return true;
+      } catch { chartsMissing = true; return false; }
+    };
     for (const p of packs) {
-      addBriefingPages(out, F, p.B, p.meta);
-      await addBulletinPages();
+      // Briefing List 1A–1C: gather the charts first so the weather part can say what is attached
+      const charts = [], att = {};
       const sf = await loadSurface();
-      if (sf && sf.png && !surfaceAdded) {
-        surfaceAdded = true;
-        try {
-          const img = await out.embedPng(sf.png);
-          const pg = out.addPage([841.89, 595.28]);
-          const k = Math.min(801 / img.width, 540 / img.height);
-          pg.drawImage(img, { x: (841.89 - img.width * k) / 2, y: 18, width: img.width * k, height: img.height * k });
-          pg.drawText(pdfText(sf.label), { x: 20, y: 570, size: 11, font: F.bold });
-        } catch { chartsMissing = true; }
+      if (sf && sf.png) { att.A = `attached · ${sf.label.replace(/^Surface pressure analysis · /, '')}`; if (!once.has('surface')) charts.push({ key: 'surface', title: `1A · ${sf.label}`, bytes: sf.png }); }
+      else { att.A = null; chartsMissing = true; }
+      for (const [kind, key] of [['sigwx', 'B'], ['wind', 'C']]) {
+        const u = wxUploads[kind], c = p.charts && p.charts[kind];
+        if (u) {
+          att[key] = `attached · your chart, added ${zl(new Date(u.added))}`;
+          if (!once.has(kind)) charts.push({ key: kind, title: `1${key} · ${WXUP_NAME[kind]} · AEMET · added ${zl(new Date(u.added))}`, bytes: b64ToBytes(u.b64), jpg: true });
+          continue;
+        }
+        const bytes = c ? await fetchChartBytes(c) : null;
+        if (bytes) { att[key] = `attached · ${c.label}`; charts.push({ title: `1${key} · ${c.label} · AEMET`, bytes }); }
+        else { att[key] = null; chartsMissing = true; }
       }
-      if (p.charts) for (const kind of ['sigwx', 'wind']) {
-        const c = p.charts[kind], u = wxUploads[kind];
-        if (u && wxAdded.has(kind)) continue; // the student's own chart goes in once
-        const bytes = u ? b64ToBytes(u.b64) : await fetchChartBytes(c);
-        if (!bytes) { chartsMissing = true; continue; }
-        if (u) wxAdded.add(kind);
-        try {
-          const img = u ? await out.embedJpg(bytes) : await out.embedPng(bytes);
-          const pg = out.addPage([841.89, 595.28]);
-          const k = Math.min(801 / img.width, 540 / img.height);
-          pg.drawImage(img, { x: (841.89 - img.width * k) / 2, y: 18, width: img.width * k, height: img.height * k });
-          pg.drawText(pdfText(u ? `${WXUP_NAME[kind]} · AEMET · added ${zl(new Date(u.added))}` : `${c.label} · AEMET`), { x: 20, y: 570, size: 11, font: F.bold });
-        } catch { chartsMissing = true; }
-      }
+      p.meta.wxAttach = att;
+      addBriefingPages(out, F, p.B, p.meta);
+      for (const c of charts) if (await chartPage(c) && c.key) once.add(c.key);
+      await addBulletinPages(); // 2 · NOTAMs
       if (p.mapData) {
         const img = await renderRouteMap(p.mapData.routes, { title: p.mapData.title, aviation: ownMeta && state.view.base !== 'vfr' ? { list: CHART_AS, labels: AS_LABELS, ama: AMA_CELLS, navaids: NAVAIDS, obstacles: OBSTACLES, places: state.view.names ? placesData : [], varAt: defaultVar } : null });
         if (img) await addMapPage(out, img, pdfText(`Marked chart · ${p.mapData.title} · 2-min marks at planned GS · HAT = heading, altitude, time`));
@@ -2872,7 +2877,7 @@ async function downloadBriefing() {
     const d = flightTime().toISOString().slice(0, 10);
     saveBlob(await out.save(), m ? `Briefing_Mission_${d}.pdf` : `Briefing_${endpoint('main', 0)?.icao || ''}-${endpoint('main', -1)?.icao || ''}_${d}.pdf`);
     state.briefDone = true; stepStatus(); scheduleSave();
-    toast(chartsMissing ? 'Briefing PDF ready — some AEMET charts could not be added (add them in step 4 · Briefing)' : 'Briefing PDF ready');
+    toast(chartsMissing ? 'Briefing PDF ready — some weather charts are missing (add SIGWX / wind chart in step 4 · Briefing)' : 'Briefing PDF ready');
   } catch (err) { console.error(err); toast('Could not build the briefing: ' + err.message); }
   finally { wxState = keepWx; }
 }
