@@ -98,6 +98,8 @@ export const PlacesLayer = L.Layer.extend({
   onRemove(map) {
     map.off('moveend zoomend resize', this._redraw, this);
     map.off('zoomstart', this._hide, this);
+    clearTimeout(this._retry);
+    this._canvas.width = 0; this._canvas.height = 0;
     L.DomUtil.remove(this._canvas);
   },
 
@@ -105,13 +107,18 @@ export const PlacesLayer = L.Layer.extend({
 
   _redraw() {
     const map = this._map, c = this._canvas;
-    const size = map.getSize(), dpr = window.devicePixelRatio || 1;
+    // at most 2× (Safari's canvas memory limit on iPhone/iPad; 3× adds nothing visible for text)
+    const size = map.getSize(), dpr = Math.min(2, window.devicePixelRatio || 1);
     const topLeft = map.containerPointToLayerPoint([0, 0]);
     L.DomUtil.setPosition(c, topLeft);
     c.width = size.x * dpr; c.height = size.y * dpr;
     c.style.width = `${size.x}px`; c.style.height = `${size.y}px`;
     c.style.visibility = '';
     const ctx = c.getContext('2d');
+    if (!ctx) { // out of canvas memory: try again shortly (tiles are being freed)
+      clearTimeout(this._retry); this._retry = setTimeout(() => this._map && this._redraw(), 800);
+      return;
+    }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const b = map.getBounds().pad(0.05);
     drawPlaces(ctx, this._places, (la, lo) => { const p = map.latLngToContainerPoint([la, lo]); return [p.x, p.y]; }, map.getZoom(), {

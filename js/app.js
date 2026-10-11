@@ -33,7 +33,7 @@ const defaultState = () => ({
   active: 'main',
   time: null,
   flight: { callsign: '', type: 'P2008', reg: 'EC-ODX', pilot: '', copilot: '', baggage: 0, baggage2: 0, pax: '', pax1: '', pax2: '', emptyMass: '', emptyMoment: '', fob: 120, taxi: '', extra: 0, weather: '', solo: false, pob: 2, lowCloud: false },
-  view: { base: 'chart', chartV: 1, points: true, marks: true, names: true, profile: true, winds: true, panel: true },
+  view: { base: 'chart', chartV: 1, namesV: 1, points: true, marks: true, names: true, profile: true, winds: true, panel: true },
   unlocked: ['LEBG', 'LERJ'],
   tem: {},
   windSource: null,
@@ -55,7 +55,7 @@ function adWaypoint(ad) {
 function load() {
   try {
     const s = JSON.parse(localStorage.getItem(STORE));
-    if (s && s.main) { const d = defaultState(); return { ...d, ...s, flight: { ...d.flight, ...s.flight }, view: { ...d.view, ...s.view, ...(s.view && s.view.chartV ? {} : { base: 'chart', chartV: 1 }) }, mb: { ...d.mb, ...s.mb }, settings: { ...d.settings, ...s.settings }, unlocked: s.unlocked || d.unlocked, tem: s.tem || {} }; }
+    if (s && s.main) { const d = defaultState(); return { ...d, ...s, flight: { ...d.flight, ...s.flight }, view: { ...d.view, ...s.view, ...(s.view && s.view.chartV ? {} : { base: 'chart', chartV: 1 }), ...(s.view && s.view.namesV ? {} : { names: true, namesV: 1 }) }, mb: { ...d.mb, ...s.mb }, settings: { ...d.settings, ...s.settings }, unlocked: s.unlocked || d.unlocked, tem: s.tem || {} }; }
   } catch { /* first run or storage blocked */ }
   return defaultState();
 }
@@ -206,7 +206,10 @@ const AviationLayer = L.GridLayer.extend({
     return c;
   },
 });
-const aviationLayer = new AviationLayer({ pane: 'labels', zIndex: 5, updateWhenZooming: false, keepBuffer: 2 });
+const aviationLayer = new AviationLayer({ pane: 'labels', zIndex: 5, updateWhenZooming: false, keepBuffer: 1 });
+// Safari (iPhone/iPad) has a hard limit on total canvas memory: free each tile's canvas as soon as
+// it leaves the map, otherwise later canvases (the town names) silently fail to draw.
+aviationLayer.on('tileunload', (e) => { if (e.tile && e.tile.width) { e.tile.width = 0; e.tile.height = 0; } });
 map.createPane('aviation').style.zIndex = 405;
 aviationLayer.options.pane = 'aviation';
 const asLabelLayer = L.layerGroup();
