@@ -14,7 +14,8 @@ Live: https://realcreate.github.io/Navlog/ (installable on iPad: Share → Add t
 - Builds the navlog exactly like the school form / LNAV Excel: TC, VAR/MC, ALT, TAS, wind,
   WCA/MH, distance leg/remaining, GS, ETE, fuel/remaining, with automatic TOC/TOD rows.
 - Date & time slider for the flight, with sunrise/sunset and landing-time check.
-- Main route + alternate route, fuel policy check, P2008 mass & balance.
+- Main route + alternate route, fuel policy check, mass & balance for every fleet type on its own sheet (P2008, P2002, P-Mentor, PS-28, C172N, C172RG, PA-28-181, P2006T/NG).
+- Times in UTC with local time in brackets; NOTAM copy refreshed every 3 hours (confirm on ICARO).
 - **Navlog PDF** fills the school's "Visual Operational Flight Plan" form.
 - Works offline after loading; "Save chart for offline" caches the chart around the route.
 
@@ -22,16 +23,16 @@ Live: https://realcreate.github.io/Navlog/ (installable on iPad: Share → Add t
 
 | Item | Rule |
 | --- | --- |
-| TAS | 90 kt + 2 kt per 1000 ft; climb 75 kt; descent 85 kt |
+| TAS | SOP cruise IAS (90 kt Tecnam / PS-28, 100 kt Cessna / Piper / P2006) + 2 kt per 1000 ft; climb 75 kt; descent 85 kt |
 | TOC / TOD | 500 ft/min, distance from Ground Speed (rounded up to 0.5 NM) |
 | Magnetic | MC = TC − VAR E (+ VAR W); MH = MC ± WCA |
 | GS | headwind subtracts, tailwind adds (cos wind angle × wind speed) |
 | ETE | Dist / GS |
-| Standard times | departure 20 min, arrival 15 min (SEP & MEP) |
-| Fuel rates | cruise 18 L/h, climb 23 L/h, descent 12 L/h (general rule — check POH) |
+| Standard times | departure 20 min, arrival 15 min (SEP & MEP), only when the route starts / ends at an aerodrome |
+| Fuel rates | general rule cruise 18 / climb 23 / descent 12 L/h; AFM cruise chart values where the aircraft SOP gives them (editable in the Fuel tab) |
 | Fuel policy | taxi, trip, alternate, contingency 5 % trip, final reserve 45 min, extra |
 | Local flights | ≤ 90 min → fuel for 135 flight minutes |
-| Units | fuel in litres, mass in kg |
+| Units | fuel in litres; mass in kg (lb / in for the Cessna and Piper sheets) |
 | Winds | approved sources only: windy.com, ama.aemet.es |
 
 ## Chart tiles

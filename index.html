@@ -3,10 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-  <meta name="theme-color" content="#0b0d12">
+  <meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="Navlog">
   <title>Navlog</title>
   <link rel="manifest" href="manifest.webmanifest">
@@ -137,6 +138,7 @@
     <div class="profile-head">
       <span class="profile-title">Profile</span>
       <span class="profile-info" id="profileInfo"></span>
+      <button class="btn small" id="altStepBtn" type="button" title="Drag the magenta line to change a leg's altitude">Drag · 500 ft</button>
       <button class="icon-btn" id="profileToggle" type="button" aria-label="Collapse profile"><svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button>
     </div>
     <div class="profile-body"><canvas id="profileCanvas"></canvas></div>

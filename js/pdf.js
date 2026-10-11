@@ -11,13 +11,18 @@ const BLOCK_TOPS = [227.4, 275.9, 324.3, 373.1, 421.6, 470.0, 519.2];
 const BLOCK_BOTTOM = 567.7;
 const PER_SIDE = BLOCK_TOPS.length;
 
+// Column edges (pt), measured from the form's printed grid. Both halves have the same columns
+// but slightly different widths, so each half is listed in full.
 const LEFT = {
-  wp: [18, 46.5], tc: [70, 93], var: [93, 120], alt: [120, 158], tas: [158, 186],
-  dir: [186, 211], spd: [211, 246], wca: [246, 275], dist: [275, 304], gs: [304, 325],
-  ete: [325, 350], eta: [350, 378], fuel: [378, 412],
+  wp: [17.5, 46], tc: [72, 93], var: [93, 120], alt: [120, 158], tas: [158, 186.5],
+  dir: [186.5, 211], spd: [211, 246], wca: [246, 275.5], dist: [275.5, 305], gs: [305, 326],
+  ete: [326, 351], eta: [351, 378], fuel: [378, 413],
 };
-const RIGHT = Object.fromEntries(Object.entries(LEFT).map(([k, [a, b]]) => [k, [a + 392, b + 392]]));
-RIGHT.wp = [414, 438.5];
+const RIGHT = {
+  wp: [414, 440], tc: [465, 484], var: [484, 512], alt: [512, 548], tas: [548, 576],
+  dir: [576, 605], spd: [605, 640], wca: [640, 675], dist: [675, 711], gs: [711, 732],
+  ete: [732, 760], eta: [760, 789], fuel: [789, 823],
+};
 
 // Header value cells: [x0, x1, yTop, yBottom]
 const HDR = {
@@ -46,10 +51,10 @@ function textFits(font, text, size, width) {
   return font.widthOfTextAtSize(text, size) <= width;
 }
 
-function drawCentered(page, font, text, [x0, x1], yTop, yBottom, size = 8) {
+function drawCentered(page, font, text, [x0, x1], yTop, yBottom, size = 9) {
   if (text == null || text === '') return;
   text = String(text);
-  const w = x1 - x0 - 3;
+  const w = x1 - x0 - 4;
   while (size > 4.5 && !textFits(font, text, size, w)) size -= 0.25;
   const tw = font.widthOfTextAtSize(text, size);
   const cy = (yTop + yBottom) / 2;
@@ -69,24 +74,43 @@ function wrap(font, text, size, width) {
   return lines;
 }
 
+// Waypoint names fill their whole cell: as large as fits (max 8.5 pt), wrapped on spaces and
+// hyphens, and narrowed (condensed up to 70 %) before the size is reduced, so names stay legible.
 function drawName(page, font, text, [x0, x1], yTop, yBottom) {
   if (!text) return;
-  const width = x1 - x0 - 2;
-  const height = yBottom - yTop - 2;
-  let size = 7, lines;
-  for (; size >= 4.5; size -= 0.25) {
-    lines = wrap(font, text, size, width);
-    const longest = Math.max(...lines.map((l) => font.widthOfTextAtSize(l, size)));
-    if (longest <= width && lines.length * size * 1.15 <= height) break;
+  const { pushGraphicsState, popGraphicsState, setCharacterSqueeze } = window.PDFLib;
+  const width = x1 - x0 - 3;
+  const height = yBottom - yTop - 3;
+  const fit = (str) => {
+    const words = str.replace(/([-/])/g, '$1 ').replace(/\s+/g, ' ').trim();
+    for (let size = 8.5; size >= 4.5; size -= 0.25) {
+      for (const sq of [100, 90, 80, 70]) {
+        const k = sq / 100;
+        const lines = wrap(font, words, size * k, width).map((l) => l.replace(/([-/]) /g, '$1'));
+        const longest = Math.max(...lines.map((l) => font.widthOfTextAtSize(l, size) * k));
+        if (longest <= width && lines.length * size * 1.12 <= height) return { size, sq, lines };
+      }
+    }
+    return { size: 4.5, sq: 70, lines: [str] };
+  };
+  let best = fit(String(text));
+  if (best.size < 7.5 || best.sq < 85) {
+    // a long single word (e.g. "Villadiego"): hyphenate it in two rather than print it tiny
+    const split = String(text).split(' ').map((w) => (w.length >= 7 ? `${w.slice(0, Math.ceil(w.length / 2))}- ${w.slice(Math.ceil(w.length / 2))}` : w)).join(' ');
+    const alt = fit(split);
+    if (alt.size > best.size) best = alt;
   }
-  const lh = size * 1.15;
+  const { size, sq, lines } = best;
+  const lh = size * 1.12;
   const total = lines.length * lh;
   const cy = (yTop + yBottom) / 2;
+  page.pushOperators(pushGraphicsState(), setCharacterSqueeze(sq));
   lines.forEach((l, i) => {
-    const tw = font.widthOfTextAtSize(l, size);
+    const tw = font.widthOfTextAtSize(l, size) * sq / 100;
     const yLine = cy - total / 2 + lh * (i + 0.5);
     page.drawText(l, { x: x0 + (x1 - x0 - tw) / 2, y: H - yLine - size * 0.35, size, font });
   });
+  page.pushOperators(popGraphicsState());
 }
 
 function drawRow(page, font, bold, cols, b, r) {
@@ -103,7 +127,7 @@ function drawRow(page, font, bold, cols, b, r) {
   full('alt', altText);
   if (r.vs) {
     // climb / descent arrow next to the altitude (Helvetica has no arrow glyph, so draw it)
-    const size = 8;
+    const size = 9;
     const tw = font.widthOfTextAtSize(altText, size);
     const [x0, x1] = cols.alt;
     const cx = x0 + (x1 - x0 + tw) / 2 + 5, cy = H - (top + bottom) / 2;
@@ -140,20 +164,22 @@ export async function buildNavlogPdf(sheets, plan) {
       const [page] = await out.copyPages(src, [0]);
       out.addPage(page);
       fillHeader(page, font, bold, sheet.header);
+      // The right half of the form has a stray half-line across the TC column (the left half
+      // does not): cover it so both halves read the same.
+      for (let b = 0; b < PER_SIDE; b++) {
+        const m = (BLOCK_TOPS[b] + (b + 1 < PER_SIDE ? BLOCK_TOPS[b + 1] : BLOCK_BOTTOM)) / 2;
+        page.drawRectangle({ x: 463.9, y: H - m - 0.9, width: 19.4, height: 1.8, color: window.PDFLib.rgb(1, 1, 1) });
+      }
       const slice = rows.slice(p * perPage, (p + 1) * perPage);
       slice.forEach((r, idx) => {
         const side = idx < PER_SIDE ? LEFT : RIGHT;
         const b = idx % PER_SIDE;
-        if (b === 0) {
-          // "from" name in the top half of the first block of each column
-          const top = BLOCK_TOPS[0];
-          drawName(page, bold, r.from, side.wp, top, (top + BLOCK_TOPS[1]) / 2);
-        }
+        const mid = (k) => (BLOCK_TOPS[k] + (k + 1 < PER_SIDE ? BLOCK_TOPS[k + 1] : BLOCK_BOTTOM)) / 2;
+        // The waypoint column is split half a block down from the grid: the first cell holds the
+        // starting point, then each cell (centred on a block line) holds the point the arrow leads to.
+        if (b === 0) drawName(page, bold, r.from, side.wp, BLOCK_TOPS[0], mid(0));
         drawRow(page, font, bold, side, b, r);
-        // destination name in the lower half of the block, level with the arrow's lower edge (as in the Excel)
-        const top = BLOCK_TOPS[b];
-        const bottom = b + 1 < PER_SIDE ? BLOCK_TOPS[b + 1] : BLOCK_BOTTOM;
-        drawName(page, bold, r.to, side.wp, (top + bottom) / 2, bottom);
+        drawName(page, bold, r.to, side.wp, mid(b), b + 1 < PER_SIDE ? mid(b + 1) : BLOCK_BOTTOM);
       });
     }
   }
@@ -176,55 +202,6 @@ function fillHeader(page, font, bold, h) {
   if (h.freq) { const [x0, x1, t, b] = HDR.freq; page.drawText(String(h.freq), { x: x0 + 4, y: H - (t + b) / 2 - 3, size: 8.5, font }); }
 }
 
-/* ---------------- Mass & balance sheet (P2008 JC form) ---------------- */
+/* ---------------- Mass & balance sheet: the school's form for each type (see mbpdf.js) ---------------- */
 
-const MB_H = 841.92; // A4 portrait
-let mbTemplateBytes = null;
-
-/**
- * mb: { date, reg, studentCode, weather, notams, rows: { empty, pilot, copilot, baggage, fuel, trip }
- *        each [mass, arm, moment], to: [mass, cg, moment], ldg: [mass, cg, moment] }
- */
-export async function buildMbPdf(mb, plan) {
-  const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
-  if (!mbTemplateBytes) mbTemplateBytes = await (await fetch('assets/mb-p2008-template.pdf')).arrayBuffer();
-  const doc = await PDFDocument.load(mbTemplateBytes);
-  const page = doc.getPages()[0];
-  const font = await doc.embedFont(StandardFonts.Helvetica);
-  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
-  const cell = (text, [x0, x1], yTop, yBottom, f = font, size = 10, color) => {
-    if (text == null || text === '') return;
-    text = String(text);
-    while (size > 5 && f.widthOfTextAtSize(text, size) > x1 - x0 - 6) size -= 0.25;
-    const tw = f.widthOfTextAtSize(text, size);
-    page.drawText(text, { x: x0 + (x1 - x0 - tw) / 2, y: MB_H - (yTop + yBottom) / 2 - size * 0.35, size, font: f, color });
-  };
-  const para = (text, x0, x1, yTop, yBottom) => {
-    if (!text) return;
-    page.drawText(String(text), { x: x0 + 6, y: MB_H - yTop - 14, size: 8.5, font, maxWidth: x1 - x0 - 12, lineHeight: 10.5 });
-  };
-  cell(mb.date, [35, 166], 150, 174);
-  cell(mb.reg, [167, 297], 150, 174, bold);
-  cell(mb.studentCode, [298, 429], 150, 174);
-  para(mb.weather, 98, 560, 197, 249);
-  para(mb.notams, 98, 560, 249, 300);
-
-  const W = [167, 297], A = [298, 429], M = [429, 560];
-  const n = (v, d) => (v == null || !Number.isFinite(+v) ? '' : (+v).toFixed(d));
-  const rowsY = { empty: [377, 411], pilot: [411, 444], copilot: [444, 478], baggage: [478, 511], fuel: [511, 545], trip: [599, 633] };
-  for (const [k, [t, b]] of Object.entries(rowsY)) {
-    const r = mb.rows[k]; if (!r) continue;
-    cell(n(r[0], 1), W, t, b);
-    if (k === 'empty') cell(n(r[1], 3), A, t, b); // other arms are printed on the form
-    cell(n(r[2], 1), M, t, b);
-  }
-  const red = rgb(0.84, 0, 0.08);
-  for (const [k, t, b] of [['to', 545, 599], ['ldg', 633, 687]]) {
-    const r = mb[k]; if (!r) continue;
-    cell(n(r[0], 1), W, t, b, bold, 11, r[3] ? undefined : red);
-    cell(n(r[1], 3), A, t + 14, b, bold, 11, r[4] ? undefined : red);
-    cell(n(r[2], 1), M, t, b, bold, 11);
-  }
-  if (plan) embedPlan(doc, plan);
-  return doc.save();
-}
+export { buildMbFormPdf as buildMbPdf } from './mbpdf.js';

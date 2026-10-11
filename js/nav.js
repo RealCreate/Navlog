@@ -5,7 +5,7 @@
 //  standard times for the initial (20 min) and final (15 min) legs,
 //  fuel per phase in litres, contingency 5 % trip, final reserve 45 min.
 
-import { SOP } from './data.js';
+import { SOP, adByIcao } from './data.js';
 
 const R_NM = 3440.065;
 const rad = (d) => (d * Math.PI) / 180;
@@ -108,6 +108,14 @@ const r1 = (x) => Math.round(x * 10 + 1e-9) / 10;
  *   stdDep: bool, stdArr: bool, fob: litres at start
  * }
  */
+export const isAerodrome = (w) => !!(w && (w.type === 'ad' || (w.ref && adByIcao(w.ref))));
+
+/** Standard departure / arrival times apply only at aerodrome endpoints (SOP 2511). */
+export function stdFlags(plan) {
+  const w = plan.waypoints || [];
+  return { dep: !!plan.stdDep && isAerodrome(w[0]), arr: !!plan.stdArr && w.length > 1 && isAerodrome(w[w.length - 1]) };
+}
+
 export function computeNavlog(plan, s = SOP) {
   const wps = plan.waypoints || [];
   const rows = [];
@@ -125,12 +133,14 @@ export function computeNavlog(plan, s = SOP) {
   // Standard times (SOP): the initial legs up to the departure reporting point take 20 min,
   // the legs from the arrival reporting point to the aerodrome take 15 min. Published
   // procedure legs (VAC corridors) are marked proc: 'dep' / 'arr' on their waypoints.
+  // They only apply when the route really starts / ends at an aerodrome.
+  const stdOn = stdFlags(plan);
   let depCount = 0, arrCount = 0;
-  if (plan.stdDep) {
+  if (stdOn.dep) {
     while (depCount < legs.length && wps[depCount + 1].proc === 'dep') depCount++;
     depCount = Math.max(1, depCount);
   }
-  if (plan.stdArr) {
+  if (stdOn.arr) {
     arrCount = 1;
     while (arrCount < legs.length && wps[wps.length - 1 - arrCount].proc === 'arr') arrCount++;
   }

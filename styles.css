@@ -238,7 +238,7 @@ table.mbt tr.total.bad td:not(.wpt) { color: var(--bad); }
 /* ---------- Vertical profile ---------- */
 .profile-dock { display: none; }
 .profile-panel { height: 220px; border-radius: var(--r); background: var(--glass); border: 0.5px solid var(--sep); overflow: hidden; }
-.profile-panel canvas, .profile-body canvas { width: 100%; height: 100%; display: block; }
+.profile-panel canvas, .profile-body canvas { width: 100%; height: 100%; display: block; touch-action: none; cursor: ns-resize; }
 .note.warn, .profile-info.warn { color: var(--warn); }
 
 .leg-out .tag { background: var(--fill2); color: var(--label); border-radius: 6px; padding: 1px 6px; font-weight: 600; }
@@ -249,8 +249,9 @@ table.mbt tr.total.bad td:not(.wpt) { color: var(--bad); }
 :root { --panel-x: 12px; --dock-h: 0px; }
 .timecard {
   position: fixed; z-index: 1000; top: calc(var(--safe-t) + 8px);
-  left: calc(var(--panel-x) + (100vw - var(--panel-x) - 76px - 12px) / 2); transform: translateX(-50%);
-  width: min(560px, calc(100vw - var(--panel-x) - 84px - 24px));
+  /* centred in the space between the panel and the right column (logo pill + map buttons) */
+  left: calc(var(--panel-x) + (100vw - var(--panel-x) - var(--rc-w, 76px) - 24px) / 2); transform: translateX(-50%);
+  width: min(560px, calc(100vw - var(--panel-x) - var(--rc-w, 76px) - 36px));
   border-radius: 16px; padding: 4px 6px; display: flex; align-items: center; gap: 4px;
   transition: left 380ms cubic-bezier(.2,.9,.25,1), width 380ms cubic-bezier(.2,.9,.25,1);
 }
@@ -329,7 +330,7 @@ table.mbt tr.total.bad td:not(.wpt) { color: var(--bad); }
 }
 @media (max-width: 899px) {
   .profile-dock { display: none !important; }
-  .timecard { left: 12px; transform: none; width: calc(100vw - 24px - 56px); }
+  .timecard { left: 12px; transform: none; width: calc(100vw - 36px - var(--rc-w, 44px)); }
   .rightcol .brand-text, .rightcol .brand-sub { display: none; }
   .rightcol .brand { padding: 0 8px; width: 44px; justify-content: center; }
   .sun { display: none; }

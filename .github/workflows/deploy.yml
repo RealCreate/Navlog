@@ -7,6 +7,8 @@ on:
   schedule:
     # Check weekly for a new edition of the ENAIRE VFR charts
     - cron: '17 4 * * 1'
+    # Refresh the NOTAM copy every 3 hours during the flying day
+    - cron: '23 5-20/3 * * *'
 
 permissions:
   contents: read
@@ -101,12 +103,17 @@ jobs:
         continue-on-error: true
         run: mkdir -p aip-tmp && python3 tools/build-aip.py aip-tmp/aip.json && mkdir -p aipdata && mv aip-tmp/aip.json aipdata/
 
+      - name: NOTAMs (convenience copy — check ICARO before flight)
+        continue-on-error: true
+        run: python3 tools/fetch-notams.py notams.json
+
       - name: Assemble site
         run: |
           mkdir -p _site/data
           cp -r index.html styles.css manifest.webmanifest sw.js js vendor assets icons _site/
           if [ -f data/places.json ]; then cp data/places.json _site/data/; else echo '[]' > _site/data/places.json; fi
           if [ -f aipdata/aip.json ]; then cp aipdata/aip.json _site/data/; else echo '{}' > _site/data/aip.json; fi
+          if [ -f notams.json ]; then cp notams.json _site/data/; else echo '{"ok":false}' > _site/data/notams.json; fi
           cp -r tiles _site/tiles
           touch _site/.nojekyll
           du -sh _site

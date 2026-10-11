@@ -202,13 +202,15 @@ export const SOP = {
 // Published VFR arrival/departure routes of the school bases (AIP VAC), listed from the
 // aerodrome outwards. Arrivals fly them in reverse. Altitudes:
 //  - LEBG VAC 1.1: all routes MAX ALT 1000 ft AGL (field 2962 ft) → 4000 ft, the school's
-//    circuit altitude (Phase 1 manual: "1000ft AGL / 4000ft LEBG"). S and E join via E-1.
+//    circuit altitude (Phase 1 manual: "1000ft AGL / 4000ft LEBG"). Outbound the school flies
+//    straight to S or E; inbound from S or E it joins via E-1.
 //    Solo flights may only enter the FIZ via N or W (SOP 2513).
 //  - LERJ VAC 1.3: inside the corridors arrivals 4500 ft, departures 4000 ft; South corridor
 //    arrivals 5500 ft, departures 5000 ft.
 export const PROCEDURES = {
   LEBG: {
     routes: { N: ['N'], W: ['W'], S: ['E-1', 'S'], E: ['E-1', 'E'] },
+    depRoutes: { N: ['N'], W: ['W'], S: ['S'], E: ['E'] }, // outbound: direct to the point
     alt: { dep: 4000, arr: 4000 },
     source: 'LEBG VAC: max 1000 ft AGL on the visual routes',
     soloEntry: ['N', 'W'],
@@ -221,35 +223,59 @@ export const PROCEDURES = {
   },
 };
 
-/** Published procedure for leaving (dep) or joining (arr) an aerodrome via a reporting point. */
+/**
+ * Published procedure for leaving (dep) or joining (arr) an aerodrome via a reporting point.
+ * The point may be anywhere on a corridor (e.g. LERJ W-1): departures fly the corridor out to
+ * that point, arrivals fly it in from that point.
+ */
 export function procedureFor(adIcao, vrpId, kind) {
   const p = PROCEDURES[adIcao];
+  const ad = adByIcao(adIcao);
   if (p) {
-    const route = Object.entries(p.routes).find(([, pts]) => pts[pts.length - 1] === vrpId);
+    const routes = kind === 'dep' && p.depRoutes ? p.depRoutes : p.routes;
+    const route = Object.entries(routes).find(([, pts]) => pts[pts.length - 1] === vrpId)
+      || Object.entries(routes).find(([, pts]) => pts.includes(vrpId));
     if (route) {
-      const [name, pts] = route;
+      const [name, all] = route;
+      const pts = all.slice(0, all.indexOf(vrpId) + 1);
       const alt = (p.altByRoute && p.altByRoute[name] ? p.altByRoute[name] : p.alt)[kind];
-      return { points: kind === 'dep' ? pts : [...pts].reverse(), alt, source: p.source, solo: p.soloEntry };
+      return { points: kind === 'dep' ? pts : [...pts].reverse(), alt, route: name, source: p.source, solo: p.soloEntry };
     }
+    if (ad && ad.vrps.some((x) => x.id === vrpId)) return { points: [vrpId], alt: p.alt[kind], source: p.source, solo: p.soloEntry };
   }
   // Other aerodromes: direct to/from the reporting point, altitude from the AIP VFR routes if published.
-  const ad = adByIcao(adIcao);
   const v = ad && ad.vrps.find((x) => x.id === vrpId);
   if (!v) return null;
   const lim = vacRouteAltitude(adIcao, v, kind);
   return { points: [vrpId], alt: lim ? lim.alt : null, source: lim ? lim.text : 'Check the VAC for routes and altitudes' };
 }
 
-// Fleet by type (FlyBy fleet M&B overview, updated 19/07/2025). Only types whose M&B sheet
-// has been set up can be calculated; the others are listed so the right type can be chosen.
+// Fleet by type (FlyBy fleet M&B overview, updated 19/07/2025) with each type's planning numbers:
+//  - cruise IAS: the aircraft SOP ("establish a cruise: 90 kts" / "100 kts for C172 and P28A",
+//    P2006 "Medium cruise 100 kts"); TAS = IAS + 2 kt per 1000 ft (Phase 2 manual).
+//  - fuel flows: Phase 2 manual general rule (cruise 18, climb 23, descent 12 L/h) unless the
+//    aircraft SOP gives AFM cruise tables, read at the SOP cruise speed with the most
+//    restrictive value (SOP: "with the most restrictive values of the charts below").
+//  - wind limits: aircraft SOP "Minimum weather conditions" tables (solo only where given).
+const GEN = { ffCruise: 18, ffClimb: 23, ffDescent: 12 };
 export const FLEET_TYPES = [
-  { id: 'P2008', name: 'Tecnam P2008 JC', icao: 'P208', mb: true, xwind: { fi: 15, solo: 10 }, regs: Object.keys(FLEET.P2008.regs) },
-  { id: 'PS28', name: 'PS-28 Cruiser', icao: 'CRUZ', mb: false, regs: ['EC-NAO', 'EC-NAP', 'EC-NCO', 'EC-NCP', 'EC-NCQ', 'EC-NIM', 'EC-NIN', 'EC-NLF', 'EC-NLG', 'EC-NPM', 'EC-OIY', 'EC-OIZ'] },
-  { id: 'P2002', name: 'Tecnam P2002 JF', icao: 'P2002', mb: false, regs: ['EC-MOH', 'EC-MOI', 'EC-MOJ'] },
-  { id: 'PMENTOR', name: 'Tecnam P-Mentor', icao: 'PMEN', mb: false, regs: ['EC-OCF', 'EC-OCG'] },
-  { id: 'C172', name: 'Cessna 172', icao: 'C172', mb: false, regs: ['EC-NSB', 'EC-IOG', 'EC-IDJ'] },
-  { id: 'C172RG', name: 'Cessna 172 RG', icao: 'C72R', mb: false, regs: [] },
-  { id: 'PA28', name: 'Piper PA-28-181', icao: 'P28A', mb: false, regs: ['EC-JFE'] },
-  { id: 'P2006', name: 'Tecnam P2006T', icao: 'P2006', mb: false, regs: ['I-CHAU', 'EC-LIF', 'EC-NKF', 'EC-OON', 'EC-OPL'] },
+  { id: 'P2008', name: 'Tecnam P2008 JC', icao: 'P208', mb: true, regs: Object.keys(FLEET.P2008.regs),
+    xwind: { fi: 15, solo: 10 }, perf: { tasBase: 90, ...GEN, src: 'SOP2518 cruise 90 kt; Phase 2 general rule (AFM 2000 RPM ≈ 18–18.7 L/h)' } },
+  { id: 'PS28', name: 'PS-28 Cruiser', icao: 'CRUZ', mb: true, regs: ['EC-NAO', 'EC-NAP', 'EC-NCO', 'EC-NCP', 'EC-NCQ', 'EC-NIM', 'EC-NIN', 'EC-NLF', 'EC-NLG', 'EC-NPM', 'EC-OIY', 'EC-OIZ'],
+    xwind: { fi: 12, solo: 10 }, headwind: { fi: 24, solo: 20 }, gustNote: 'Crosswind incl. gusts: FI 18 kt gusting 20, solo 10 kt gusting 15 (SOP2517)',
+    perf: { tasBase: 90, ...GEN, src: 'SOP2517 cruise 90 kt; no PS-28 cruise chart in the SOP → Phase 2 general rule (check the POH)' } },
+  { id: 'P2002', name: 'Tecnam P2002 JF', icao: 'P2002', mb: true, regs: ['EC-MOH', 'EC-MOI', 'EC-MOJ'],
+    xwind: { fi: 12, solo: 10 }, headwind: { fi: 24, solo: 20 }, gustNote: 'Crosswind incl. gusts: FI 18 kt gusting 20, solo 10 kt gusting 15 (SOP2517)',
+    perf: { tasBase: 90, ffCruise: 22, ffClimb: 23, ffDescent: 12, src: 'SOP2517 cruise 90 kt; AFM 580 kg chart, ~100 KTAS most restrictive 22 L/h' } },
+  { id: 'PMENTOR', name: 'Tecnam P-Mentor', icao: 'PMEN', mb: true, regs: ['EC-OCF', 'EC-OCG'],
+    xwind: { fi: 10 }, perf: { tasBase: 90, ffCruise: 14, ffClimb: 23, ffDescent: 12, src: 'SOP2520 cruise 90 kt; AFM 720 kg chart 4800 RPM 14 L/h' } },
+  { id: 'C172', name: 'Cessna 172N', icao: 'C172', mb: true, regs: ['EC-NSB', 'EC-IOG', 'EC-IDJ'],
+    xwind: { fi: 15 }, perf: { tasBase: 100, ...GEN, src: 'SOP2519 cruise 100 kt; no cruise chart in the SOP → Phase 2 general rule (check the POH)' } },
+  { id: 'C172RG', name: 'Cessna 172 RG', icao: 'C72R', mb: true, regs: [],
+    xwind: { fi: 15 }, perf: { tasBase: 100, ...GEN, src: 'SOP2523 cruise 100 kt (21"/2100 RPM); no cruise chart in the SOP → Phase 2 general rule (check the POH)' } },
+  { id: 'PA28', name: 'Piper PA-28-181', icao: 'P28A', mb: true, regs: ['EC-JFE'],
+    xwind: { fi: 17 }, perf: { tasBase: 100, ...GEN, src: 'SOP2519 cruise 100 kt; no cruise chart in the SOP → Phase 2 general rule (check the POH)' } },
+  { id: 'P2006', name: 'Tecnam P2006T', icao: 'P2006', mb: true, regs: ['I-CHAU', 'EC-LIF', 'EC-NKF', 'EC-OON', 'EC-OPL'],
+    xwind: { fi: 17 }, perf: { tasBase: 100, ffCruise: 28.6, ffClimb: 46, ffDescent: 24, src: 'SOP2521 medium cruise 100 kt; AFM 1150 kg chart 2100 RPM/22" 14.3 L/h per engine (both engines); climb/descent: general rule × 2 engines (check the AFM)' } },
 ];
 export const fleetType = (id) => FLEET_TYPES.find((t) => t.id === id) || FLEET_TYPES[0];

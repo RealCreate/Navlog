@@ -84,3 +84,30 @@ test('LEBG W VRP is roughly 10 NM west of the field (Excel leg 1 = 10 NM)', () =
   // Direct line; the Excel used 265 because it follows the published FIZ route.
   assert.ok(Math.abs(tc - 275) < 3, `TC ${tc}`);
 });
+
+import { procedureFor } from '../js/data.js';
+import { stdFlags } from '../js/nav.js';
+
+test('LEBG: straight out to S/E, inbound from S/E via E-1', () => {
+  assert.deepEqual(procedureFor('LEBG', 'S', 'dep').points, ['S']);
+  assert.deepEqual(procedureFor('LEBG', 'E', 'dep').points, ['E']);
+  assert.deepEqual(procedureFor('LEBG', 'S', 'arr').points, ['S', 'E-1']);
+  assert.deepEqual(procedureFor('LEBG', 'E', 'arr').points, ['E', 'E-1']);
+  assert.deepEqual(procedureFor('LEBG', 'N', 'arr').points, ['N']);
+  assert.equal(procedureFor('LEBG', 'S', 'dep').alt, 4000);
+});
+
+test('LERJ corridor point anywhere on the corridor keeps the corridor altitude', () => {
+  const d = procedureFor('LERJ', 'W-1', 'dep');
+  assert.deepEqual(d.points, ['W-2', 'W-1']);
+  assert.equal(d.alt, 4000);
+  assert.equal(procedureFor('LERJ', 'S-1', 'dep').alt, 5000);
+  assert.equal(procedureFor('LERJ', 'W-2', 'arr').alt, 4500);
+});
+
+test('Standard times only at aerodrome endpoints', () => {
+  const lebg = POINTS.find((p) => p.key === 'LEBG');
+  const town = { name: 'Santo Domingo', lat: 42.44, lon: -2.95 };
+  assert.deepEqual(stdFlags({ stdDep: true, stdArr: true, waypoints: [lebg, town] }), { dep: true, arr: false });
+  assert.deepEqual(stdFlags({ stdDep: true, stdArr: true, waypoints: [town, lebg] }), { dep: false, arr: true });
+});

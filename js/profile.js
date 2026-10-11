@@ -110,6 +110,7 @@ export function drawProfile(canvas, { planned, terrain, color = '#d1009a' }) {
   const font = '600 10.5px -apple-system, system-ui, sans-serif';
 
   if (!planned || planned.length < 2) {
+    canvas._geom = null;
     ctx.fillStyle = ink; ctx.font = '500 13px -apple-system, system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('Add waypoints to see the vertical profile', w / 2, h / 2);
@@ -198,5 +199,17 @@ export function drawProfile(canvas, { planned, terrain, color = '#d1009a' }) {
   for (let d = 0; d <= totalD; d += stepD) ctx.fillText(`${d}`, X(d), h - padB + 6);
   ctx.textAlign = 'right'; ctx.fillText('NM', w - padR, h - padB + 6);
 
+  canvas._geom = { padL, padR, padT, padB, w, h, top, totalD };
   return { maxTerrain: Math.round(maxTerr), minClearance: Number.isFinite(minClear) ? Math.round(minClear) : null };
+}
+
+/** Distance (NM) and altitude (ft) under a point of a drawn profile canvas, or null. */
+export function profileAt(canvas, clientX, clientY) {
+  const g = canvas._geom;
+  if (!g) return null;
+  const r = canvas.getBoundingClientRect();
+  const x = clientX - r.left, y = clientY - r.top;
+  const d = ((x - g.padL) / (g.w - g.padL - g.padR)) * g.totalD;
+  const alt = (1 - (y - g.padT) / (g.h - g.padT - g.padB)) * g.top;
+  return { d: Math.max(0, Math.min(g.totalD, d)), alt };
 }

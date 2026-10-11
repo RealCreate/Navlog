@@ -1,10 +1,12 @@
-import { AERODROMES, POINTS, FLEET, FLEET_TYPES, fleetType, SOP, adByIcao, mergeAip, procedureFor, PROCEDURES } from './data.js';
-import { computeNavlog, fuelPolicy, massBalance, fmtMMSS, fmtHMS, fmtVar, fmtAlt, parseAlt, cruiseTas, distanceNm, midpoint } from './nav.js';
+import { AERODROMES, POINTS, FLEET_TYPES, fleetType, SOP, adByIcao, mergeAip, procedureFor, PROCEDURES } from './data.js';
+import { computeNavlog, stdFlags, fuelPolicy, fmtMMSS, fmtHMS, fmtVar, fmtAlt, parseAlt, cruiseTas, distanceNm, midpoint } from './nav.js';
 import { buildNavlogPdf, buildMbPdf } from './pdf.js';
-import { sampleTerrain, plannedProfile, drawProfile } from './profile.js';
+import { sampleTerrain, plannedProfile, drawProfile, profileAt } from './profile.js';
 import { PlacesLayer } from './places.js';
 import { fetchWinds } from './winds.js';
 import { fetchWeather, assess, metarSummary } from './weather.js';
+import { MB_TYPES, computeMb, fmtMoment, cgLimitsAt, KG_TO_LB } from './mb.js';
+import { zl, utc, local } from './time.js';
 import { APPROVED, IFR_ONLY, EASY_FIRST, FULL_STOP, CLOSING_LOCAL, NO_REFUEL, FREQS, aerodromeOpen, airspaceCrossings, crossingIssue, buildFpl, departureBriefing, arrivalBriefing, temThreats } from './rules.js';
 import { listPlans, savePlan, deletePlan, getPlan, planFromPdf } from './plans.js';
 import { sunTimes } from './sun.js';
@@ -14,7 +16,7 @@ const LEBG = adByIcao('LEBG');
 const STORE = 'navlog.v1';
 const STEP_MIN = 5; // slider steps of 5 minutes
 const MAX_DAYS = 3; // plan at most 3 days ahead
-const AC = FLEET.P2008;
+const acOf = (type) => MB_TYPES[type] || MB_TYPES.P2008;
 
 /* ---------------- State ---------------- */
 
@@ -23,7 +25,7 @@ const defaultState = () => ({
   alt: { waypoints: [], stdDep: false, stdArr: false },
   active: 'main',
   time: null,
-  flight: { callsign: '', type: 'P2008', reg: 'EC-ODX', pilot: '', copilot: '', baggage: 0, fob: AC.fuelCapacity, taxi: '', extra: 0, weather: '', solo: false, pob: 2, lowCloud: false },
+  flight: { callsign: '', type: 'P2008', reg: 'EC-ODX', pilot: '', copilot: '', baggage: 0, baggage2: 0, pax: '', pax1: '', pax2: '', emptyMass: '', emptyMoment: '', fob: 120, taxi: '', extra: 0, weather: '', solo: false, pob: 2, lowCloud: false },
   view: { base: 'vfr', points: true, marks: true, names: true, profile: true, winds: true, panel: true },
   unlocked: ['LEBG', 'LERJ'],
   tem: {},
@@ -120,13 +122,18 @@ picker.addEventListener('change', () => {
 });
 
 const dFmt = new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
-const tFmt = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit' });
-const zFmt = (d) => `${String(d.getUTCHours()).padStart(2, '0')}${String(d.getUTCMinutes()).padStart(2, '0')}Z`;
+const zFmt = zl;
+
+// Keep the time card clear of the logo pill: size it from the right column's real width.
+const rightCol = document.querySelector('.rightcol');
+const syncRightCol = () => document.documentElement.style.setProperty('--rc-w', `${Math.ceil(rightCol.getBoundingClientRect().width)}px`);
+if (window.ResizeObserver) new ResizeObserver(syncRightCol).observe(rightCol);
+syncRightCol();
 
 function renderTime() {
   const t = flightTime();
-  document.getElementById('timeMain').textContent = `${dFmt.format(t)} · ${tFmt.format(t)} LT`;
-  document.getElementById('timeSub').textContent = `T/O ${zFmt(t)}`;
+  document.getElementById('timeMain').textContent = `${dFmt.format(t)} · ${utc(t)} (${local(t)})`;
+  document.getElementById('timeSub').textContent = 'T/O';
   const dep = state.main.waypoints[0] || { lat: LEBG.lat, lon: LEBG.lon };
   const { rise, set } = sunTimes(t, dep.lat, dep.lon);
   const total = result ? result.main.totals.timeSec : 0;
@@ -322,12 +329,26 @@ function addPoint(ref) {
       for (const id of proc.points) {
         const p = vrpRef(firstAd.icao, id); if (!p) continue;
         const wp = newWaypoint(p.lat, p.lon, p);
-        wp.proc = 'dep'; if (proc.alt) wp.alt = proc.alt;
+        wp.proc = 'dep'; wp.procRoute = proc.route; if (proc.alt) wp.alt = proc.alt;
         wps.push(wp);
       }
       toast(`Departure ${proc.points.join(' → ')}${proc.alt ? ` at ${proc.alt} ft` : ''} · ${proc.source}`);
       haptic(); return update({ rerenderPanels: true });
     }
+  }
+  // Further points of the same departure corridor, tapped one by one (e.g. LERJ → W-2 → W-1 → W):
+  // still part of the published departure, so they keep the departure altitude.
+  const lastDep = wps.length > 1 && wps.slice(1).every((w) => w.proc === 'dep') ? wps[wps.length - 1] : null;
+  const contProc = !isStart && firstAd && ref.type === 'vrp' && ref.ad === firstAd.icao && lastDep ? procedureFor(firstAd.icao, ref.id, 'dep') : null;
+  if (contProc && contProc.route && contProc.route === lastDep.procRoute && contProc.points.length > wps.length - 1) {
+    const proc = contProc;
+    const wp = newWaypoint(ref.lat, ref.lon, ref);
+    wp.proc = 'dep'; wp.procRoute = proc.route;
+    const alt = state.flight.lowCloud && firstAd.icao === 'LEBG' ? 4500 : proc && proc.alt;
+    if (alt) wps.slice(1).concat(wp).forEach((w) => { w.alt = alt; });
+    wps.push(wp);
+    toast(`Departure continues to ${refName(ref)}${alt ? ` at ${alt} ft` : ''}`);
+    haptic(); return update({ rerenderPanels: true });
   }
   if (isStart && firstAd && ref.type !== 'vrp' && state.active === 'main') {
     toast(`Tip: leave ${firstAd.icao} via one of its reporting points (VAC)`);
@@ -341,6 +362,14 @@ function addPoint(ref) {
       const proc = procedureFor(ad.icao, lastRef.id, 'arr');
       if (proc && state.flight.lowCloud && ad.icao === 'LEBG' && lastRef.id === 'E') toast('Low-cloud procedure: E point is not used — enter via N, W or S–E-1 at 4000 ft');
       if (proc) {
+        // Corridor points tapped one by one before the aerodrome (e.g. W → W-1 → W-2 → LERJ):
+        // the first of them is the entry point, the rest are part of the arrival.
+        // only points on the same published corridor (e.g. LERJ W, W-1, W-2), never other VRPs flown en route
+        const ofAd = (w) => { const p = w && w.ref && POINTS.find((x) => x.key === w.ref); const routes = PROCEDURES[ad.icao] ? Object.values(PROCEDURES[ad.icao].routes) : [];
+          return p && p.type === 'vrp' && p.ad === ad.icao && routes.some((r) => r.includes(p.id) && r.includes(lastRef.id)); };
+        let k = wps.length - 1;
+        while (k - 1 >= 1 && ofAd(wps[k - 1]) && wps[k - 1].proc !== 'dep') k--;
+        for (let j = k; j < wps.length; j++) { if (proc.alt) wps[j].alt = proc.alt; if (j > k) wps[j].proc = 'arr'; }
         if (proc.alt) last.alt = proc.alt; // established at the procedure altitude over the entry point
         for (const id of proc.points.slice(1)) {
           const p = vrpRef(ad.icao, id); if (!p) continue;
@@ -351,7 +380,8 @@ function addPoint(ref) {
         const wp = newWaypoint(ref.lat, ref.lon, ref);
         wp.proc = 'arr'; if (proc.alt) wp.alt = proc.alt;
         wps.push(wp);
-        const solo = state.flight.solo && proc.solo && !proc.solo.includes(lastRef.id);
+        const entryId = (POINTS.find((x) => x.key === wps[k].ref) || lastRef).id;
+        const solo = state.flight.solo && proc.solo && !proc.solo.includes(entryId);
         toast(solo ? `Solo flights may only enter via ${proc.solo.join(' or ')} (SOP)` : `Arrival ${proc.points.join(' → ')} → ${ad.icao}${proc.alt ? ` at ${proc.alt} ft` : ''} · ${proc.source}`);
         haptic(); return update({ rerenderPanels: true });
       }
@@ -544,22 +574,35 @@ map.on('zoomend', () => drawRoutes());
 
 /* ---------------- Compute ---------------- */
 
+// Planning numbers for the selected aircraft type (SOP cruise speed + fuel flows), with any
+// values the student has edited in the Fuel tab.
+function planSop() {
+  const ft = fleetType(state.flight.type);
+  const own = (state.perf && state.perf[ft.id]) || {};
+  const pick = (k) => (Number.isFinite(+own[k]) && own[k] !== '' ? +own[k] : ft.perf[k]);
+  return { ...SOP, tasBase: pick('tasBase'), ffCruise: pick('ffCruise'), ffClimb: pick('ffClimb'), ffDescent: pick('ffDescent') };
+}
+
 function compute() {
   const f = state.flight;
   const ta = endpoint('main', 0)?.ta || 6000;
-  const main = computeNavlog({ ...state.main, fob: +f.fob || 0, ta });
+  const sop = planSop();
+  const main = computeNavlog({ ...state.main, fob: +f.fob || 0, ta }, sop);
   const lastRem = main.rows.length ? main.rows[main.rows.length - 1].fuelRem : +f.fob || 0;
-  const alt = computeNavlog({ ...state.alt, fob: lastRem, ta });
+  const alt = computeNavlog({ ...state.alt, fob: lastRem, ta }, sop);
   const dep = endpoint('main', 0), dest = endpoint('main', -1);
   const local = !!dep && !!dest && dep.icao === dest.icao;
   const fuel = fuelPolicy({
     taxi: +f.taxi || 0, trip: main.totals.trip, alternate: alt.totals.trip, extra: +f.extra || 0,
     fob: +f.fob || 0, localFlight: local, flightMin: main.totals.timeSec / 60,
-  });
+  }, sop);
   const useRoute = state.mb.tripSource === 'route' && main.rows.length > 0;
   const tripL = useRoute ? main.totals.trip : (+state.mb.tripManual || 0);
   const altL = useRoute ? alt.totals.trip : (+state.mb.altManual || 0);
-  const mb = fleetType(f.type).mb ? massBalance({ ac: AC, reg: f.reg, pilot: +f.pilot || 0, copilot: +f.copilot || 0, baggage: +f.baggage || 0, fobL: +f.fob || 0, tripL, altL }) : null;
+  const ac = acOf(f.type);
+  const loads = Object.fromEntries(ac.stations.map((st) => [st.id, +f[st.id] || 0]));
+  const empty = ac.regs[f.reg] ? null : [+f.emptyMass || 0, +f.emptyMoment || 0];
+  const mb = computeMb(f.type, { reg: f.reg, empty, loads, fobL: +f.fob || 0, tripL, altL });
   return { main, alt, fuel, mb };
 }
 
@@ -683,9 +726,9 @@ function renderRoute() {
   if (nl.warnings.length) html += `<div class="warnings">${nl.warnings.map(esc).join('<br>')}</div>`;
 
   html += `<div class="group">
-    <div class="toggle-row"><span>Standard departure — ${SOP.stdDepMin} min <small class="label">(first leg)</small></span>
+    <div class="toggle-row"><span>Standard departure — ${SOP.stdDepMin} min <small class="label">(only when starting at an aerodrome)</small></span>
       <label class="switch"><input type="checkbox" data-flag="stdDep" ${r.stdDep ? 'checked' : ''}><span></span></label></div>
-    <div class="toggle-row"><span>Standard arrival — ${SOP.stdArrMin} min <small class="label">(last leg)</small></span>
+    <div class="toggle-row"><span>Standard arrival — ${SOP.stdArrMin} min <small class="label">(only when ending at an aerodrome)</small></span>
       <label class="switch"><input type="checkbox" data-flag="stdArr" ${r.stdArr ? 'checked' : ''}><span></span></label></div>
     <div class="toggle-row"><span>Solo flight <small class="label">(LEBG entry only via N or W)</small></span>
       <label class="switch"><input type="checkbox" data-solo ${state.flight.solo ? 'checked' : ''}><span></span></label></div>
@@ -708,6 +751,7 @@ function renderRoute() {
     html += `<div class="group"><div class="empty">${isAlt ? 'Tap the chart to plan the route to your alternate. It starts at your destination.' : 'Tap the chart to add your first waypoint.'}</div></div>`;
   } else {
     html += `<div class="group ${isAlt ? 'alt-mode' : ''}">`;
+    const stdOn = stdFlags(r);
     wps.forEach((w, i) => {
       const legRows = nl.rows.filter((x) => x.legIndex === i);
       const sub = w.ref ? (POINTS.find((p) => p.key === w.ref)?.sub || '') : `${w.lat.toFixed(4)}, ${w.lon.toFixed(4)}`;
@@ -722,7 +766,7 @@ function renderRoute() {
         <div class="wp-sub">${esc(sub)}${adByIcao(w.ref) ? ` · ${adByIcao(w.ref).elev} ft · <a href="${adByIcao(w.ref).vac}" target="_blank" rel="noopener">VAC ↗</a>` : ''}</div>`;
       if (i > 0) {
         const altFt = parseAlt(w.alt) || 0;
-        const tasPh = (i === 1 && r.stdDep) || (i === wps.length - 1 && r.stdArr) ? SOP.tasBase : cruiseTas(altFt);
+        const tasPh = (i === 1 && stdOn.dep) || (i === wps.length - 1 && stdOn.arr) ? planSop().tasBase : cruiseTas(altFt, planSop());
         const m = midpoint(wps[i - 1], w);
         const windy = `https://www.windy.com/?wind,${windyLevel(altFt)},${m.lat.toFixed(3)},${m.lon.toFixed(3)},9`;
         html += `<div class="leg">
@@ -738,7 +782,7 @@ function renderRoute() {
           const fuel = Math.round(legRows.reduce((t, x) => t + x.fuel, 0) * 10) / 10;
           const last = legRows[legRows.length - 1];
           const dist = legRows.reduce((t, x) => t + x.dist, 0);
-          const sera = !w.proc && !(i === 1 && r.stdDep) && !(i === wps.length - 1 && r.stdArr) ? semicircularHint(last.mc, parseAlt(w.alt)) : null;
+          const sera = !w.proc && !(i === 1 && stdOn.dep) && !(i === wps.length - 1 && stdOn.arr) ? semicircularHint(last.mc, parseAlt(w.alt)) : null;
           html += `<div class="leg-out">${w.proc ? `<span class="tag">${w.proc === 'dep' ? 'Departure route' : 'Arrival route'} · VAC</span>` : ''}<span>TC <b>${last.tc}°</b></span><span>MH <b>${last.mh}°</b></span><span>Dist <b>${dist} NM</b></span><span>GS <b>${last.gs} kt</b></span><span>ETE <b>${fmtMMSS(ete)}</b></span><span>Fuel <b>${fuel} L</b></span>${legRows.length > 1 ? `<span>incl. <b>${legRows.find((x) => x.auto)?.to || ''}</b></span>` : ''}${sera ? `<span class="hint">${sera}</span>` : ''}</div>`;
         }
       }
@@ -814,7 +858,7 @@ function selectWaypoint(id, scroll) {
 function headerFor(key) {
   const f = state.flight;
   const t = flightTime();
-  const date = t.toLocaleDateString('en-GB');
+  const date = `${t.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' })} T/O ${zl(t)}`;
   const mainDep = endpoint('main', 0), mainDest = endpoint('main', -1), altDest = endpoint('alt', -1);
   const fp = result.fuel;
   const mb = result.mb;
@@ -878,7 +922,7 @@ function renderNavlog() {
     <div class="row"><span class="grow label">Total time</span><span class="value">${fmtHMS(nl.totals.timeSec)}</span></div>
     <div class="row"><span class="grow label">Trip fuel</span><span class="value">${nl.totals.trip.toFixed(2)} L</span></div>
   </div>
-  <p class="note">Blue ETEs are SOP standard times (departure ${SOP.stdDepMin} min, arrival ${SOP.stdArrMin} min). TOC/TOD at ${SOP.roc} ft/min using GS; climb ${SOP.tasClimb} kt / ${SOP.ffClimb} L/h, descent ${SOP.tasDescent} kt / ${SOP.ffDescent} L/h, cruise ${SOP.ffCruise} L/h (SOP 2511 general rule). ETA, ATE, ATA are filled in flight.</p>
+  <p class="note">Blue ETEs are SOP standard times (departure ${SOP.stdDepMin} min, arrival ${SOP.stdArrMin} min). TOC/TOD at ${SOP.roc} ft/min using GS; climb ${SOP.tasClimb} kt / ${planSop().ffClimb} L/h, descent ${SOP.tasDescent} kt / ${planSop().ffDescent} L/h, cruise IAS ${planSop().tasBase} kt + 2 kt/1000 ft, ${planSop().ffCruise} L/h (${esc(fleetType(state.flight.type).perf.src)}). ETA, ATE, ATA are filled in flight.</p>
   <button class="btn primary wide" data-act="pdf">Download navlog PDF</button>`;
   panels.navlog.innerHTML = html;
 }
@@ -893,7 +937,7 @@ panels.navlog.addEventListener('click', (e) => { if (e.target.closest('[data-act
 function crossCountryFull() {
   const dep = endpoint('main', 0), dest = endpoint('main', -1);
   if (!dep || !dest || dep.icao === dest.icao) return '';
-  const cap = AC.fuelCapacity, fob = +state.flight.fob || 0;
+  const cap = acOf(state.flight.type).fuelMaxL, fob = +state.flight.fob || 0;
   const ok = fob >= cap;
   return `<div class="row ${ok ? 'check-ok' : 'check-bad'}"><span class="grow label">Cross-country: tanks full before the flight (${cap} L, within M&amp;B limits)</span><span class="value">${ok ? 'OK' : 'NOT FULL'}</span></div>`;
 }
@@ -921,10 +965,26 @@ function renderFuel() {
   <div class="group">${p.checks.map((c) => row(c.text, c.ok ? 'OK' : 'NOT MET', c.ok ? 'check-ok' : 'check-bad')).join('')}
   ${crossCountryFull()}
   ${f.taxi === '' ? row('Taxi fuel', 'Enter from POH', 'check-bad') : ''}</div>
-  <p class="note">Fuel in litres, mass in kg (SOP 2511). Planning rates are the Flight Planning Manual general rule; the P2008 SOP asks for the most restrictive values of the AFM cruise chart (e.g. 19.2 L/h at 4000 ft / 2100 RPM) — check the POH for your aircraft and RPM. Cross-country flights depart with full tanks within M&amp;B limits.</p>`;
+  <div class="group-title"><span>Planning numbers · ${esc(fleetType(f.type).name)}</span>${state.perf && state.perf[f.type] ? '<button class="btn small" data-act="perfReset">Reset</button>' : ''}</div>
+  <div class="group"><div class="row wrap">
+    ${[['tasBase', 'Cruise IAS (kt)'], ['ffCruise', 'Cruise (L/h)'], ['ffClimb', 'Climb (L/h)'], ['ffDescent', 'Descent (L/h)']].map(([k, l]) => `<label class="field narrow"><span>${l}</span><input data-perf="${k}" inputmode="decimal" value="${planSop()[k]}"></label>`).join('')}
+  </div><div class="row"><span class="grow label">${esc(fleetType(f.type).perf.src)}. Climb ${SOP.tasClimb} kt, descent ${SOP.tasDescent} kt, ${SOP.roc} ft/min (Phase 2 manual).</span></div></div>
+  <p class="note">Fuel in litres, mass in kg (SOP 2511). Cross-country flights depart with full tanks within M&amp;B limits.</p>`;
   panels.fuel.innerHTML = html;
 }
+panels.fuel.addEventListener('click', (e) => {
+  if (!e.target.closest('[data-act=perfReset]')) return;
+  if (state.perf) delete state.perf[state.flight.type];
+  update({ rerenderPanels: true });
+});
 panels.fuel.addEventListener('change', (e) => {
+  const pk = e.target.dataset.perf;
+  if (pk) {
+    state.perf = state.perf || {};
+    const own = (state.perf[state.flight.type] = state.perf[state.flight.type] || {});
+    own[pk] = e.target.value === '' ? '' : Math.max(0, +e.target.value);
+    return update({ rerenderPanels: true });
+  }
   const k = e.target.dataset.ff; if (!k) return;
   state.flight[k] = e.target.value === '' ? '' : Math.max(0, +e.target.value);
   update({ rerenderPanels: true });
@@ -942,46 +1002,64 @@ function mbTrip() {
 function renderMB() {
   const f = state.flight, mbs = state.mb;
   const m = result.mb;
-  const reg = AC.regs[f.reg];
+  const ac = acOf(f.type);
   const t = mbTrip();
   const row = (l, v, cls = '') => `<div class="row ${cls}"><span class="grow label">${l}</span><span class="value">${v}</span></div>`;
-  const cgOk = (cg) => cg >= AC.cg[0] && cg <= AC.cg[1];
-  const kg = (v) => `${v.toFixed(1)} kg`;
-  const ft = fleetType(f.type);
-  let html = `<div class="group-title"><span>${esc(ft.name)}${ft.mb ? ` · MTOW ${AC.mtow} kg` : ''}</span></div>
+  const U = ac.unit, A = ac.armUnit, mom = ac.momentDiv ? `${U}·${A}/1000` : `${U}·${A}`;
+  const n = (v, dp = 1) => (Number.isFinite(v) ? v.toFixed(dp) : '');
+    const regs = Object.keys(ac.regs);
+  let html = `<div class="group-title"><span>${esc(ac.name)} · MTOW ${m ? m.mtow : ac.mtow} ${U}</span></div>
   <div class="group"><div class="row wrap">
-    <label class="field"><span>Aircraft type</span><select data-ff="type">${FLEET_TYPES.map((t) => `<option value="${t.id}" ${t.id === f.type ? 'selected' : ''}>${t.name}${t.mb ? '' : ' — M&B coming'}</option>`).join('')}</select></label>
-    <label class="field"><span>Registration</span><select data-ff="reg">${fleetType(f.type).regs.map((r) => `<option ${r === f.reg ? 'selected' : ''}>${r}</option>`).join('') || '<option>—</option>'}</select></label>
+    <label class="field"><span>Aircraft type</span><select data-ff="type">${FLEET_TYPES.map((x) => `<option value="${x.id}" ${x.id === f.type ? 'selected' : ''}>${x.name}</option>`).join('')}</select></label>
+    <label class="field"><span>Registration</span>${regs.length ? `<select data-ff="reg">${regs.map((r) => `<option ${r === f.reg ? 'selected' : ''}>${r}</option>`).join('')}</select>` : `<input data-ff="reg" value="${esc(f.reg)}" placeholder="EC-…" autocapitalize="characters">`}</label>
     <label class="field"><span>Student code</span><input data-mb="studentCode" value="${esc(mbs.studentCode)}" autocapitalize="characters" autocomplete="off"></label>
-  </div>${fleetType(f.type).mb ? '' : `<div class="row"><span class="grow label">The ${esc(fleetType(f.type).name)} M&amp;B sheet is not set up yet. It will follow its SOP's worked example; for now use the paper sheet.</span></div>`}<div class="row wrap">
-    <label class="field"><span>Pilot (kg)</span><input data-ff="pilot" inputmode="decimal" value="${esc(f.pilot)}" placeholder="real mass"></label>
-    <label class="field"><span>Copilot / FI (kg)</span><input data-ff="copilot" inputmode="decimal" value="${esc(f.copilot)}" placeholder="0 if solo"></label>
-    <label class="field"><span>Baggage (kg)</span><input data-ff="baggage" inputmode="decimal" value="${esc(f.baggage)}"></label>
-  </div><div class="row wrap">
-    <label class="field"><span>Fuel on board (L)</span><input data-ff="fob" inputmode="decimal" value="${esc(f.fob)}"></label>
+  </div>`;
+  if (!regs.length || !ac.regs[f.reg]) {
+    html += `<div class="row wrap"><label class="field"><span>Empty mass (${U})</span><input data-ff="emptyMass" inputmode="decimal" value="${esc(f.emptyMass)}"></label>
+      <label class="field"><span>Empty moment (${U}·${A})</span><input data-ff="emptyMoment" inputmode="decimal" value="${esc(f.emptyMoment)}"></label></div>
+      <div class="row"><span class="grow label">Not in the fleet overview: copy the empty mass and moment from this aircraft's latest weight &amp; balance report.</span></div>`;
+  }
+  html += '<div class="row wrap">';
+  for (const st of ac.stations) {
+    const ph = st.id === 'pilot' ? 'real mass' : st.id === 'copilot' ? '0 if solo' : '0';
+    const hint = [U === 'lb' && +f[st.id] ? `${(+f[st.id] * KG_TO_LB).toFixed(1)} lb` : '', st.max ? `max ${st.max} ${U}` : ''].filter(Boolean).join(' · ');
+    html += `<label class="field"><span>${esc(st.label)} (kg)</span><input data-ff="${st.id}" inputmode="decimal" value="${esc(f[st.id] ?? '')}" placeholder="${ph}">${hint ? `<small class="label">${hint}</small>` : ''}</label>`;
+  }
+  html += `</div><div class="row wrap">
+    <label class="field"><span>Fuel on board (L)</span><input data-ff="fob" inputmode="decimal" value="${esc(f.fob)}"><small class="label">max usable ${ac.fuelMaxL} L</small></label>
     <label class="field"><span>Trip fuel (L)</span>${t.useRoute ? `<b>${t.trip.toFixed(1)}</b>` : `<input data-mb="tripManual" inputmode="decimal" value="${esc(mbs.tripManual)}" placeholder="0">`}</label>
   </div>
   <div class="toggle-row"><span>Take trip fuel from the planned route${result.main.rows.length ? '' : ' <small class="label">(no route yet)</small>'}</span>
     <label class="switch"><input type="checkbox" data-mbflag="tripSource" ${mbs.tripSource === 'route' ? 'checked' : ''}><span></span></label></div>
   </div>`;
   if (m) {
-    const fuelKg = f.fob * AC.fuelDensity, tripKg = t.trip * AC.fuelDensity;
-    html += `<div class="group-title"><span>Sheet</span></div>
-    <div class="nl-wrap"><table class="nl mbt"><thead><tr><th></th><th>Mass (kg)</th><th>Arm (m)</th><th>Moment (kg·m)</th></tr></thead><tbody>
-      <tr class="bot"><td class="wpt">Empty mass</td><td>${reg[0].toFixed(1)}</td><td>${(reg[1] / reg[0]).toFixed(3)}</td><td>${reg[1].toFixed(1)}</td></tr>
-      <tr class="bot"><td class="wpt">Pilot</td><td>${(+f.pilot || 0).toFixed(1)}</td><td>${AC.arms.pilot.toFixed(3)}</td><td>${((+f.pilot || 0) * AC.arms.pilot).toFixed(1)}</td></tr>
-      <tr class="bot"><td class="wpt">Copilot</td><td>${(+f.copilot || 0).toFixed(1)}</td><td>${AC.arms.copilot.toFixed(3)}</td><td>${((+f.copilot || 0) * AC.arms.copilot).toFixed(1)}</td></tr>
-      <tr class="bot"><td class="wpt">Baggage</td><td>${(+f.baggage || 0).toFixed(1)}</td><td>${AC.arms.baggage.toFixed(3)}</td><td>${((+f.baggage || 0) * AC.arms.baggage).toFixed(1)}</td></tr>
-      <tr class="bot"><td class="wpt">Fuel on board <small class="label">${f.fob} L</small></td><td>${fuelKg.toFixed(1)}</td><td>${AC.arms.fuel.toFixed(3)}</td><td>${(fuelKg * AC.arms.fuel).toFixed(1)}</td></tr>
-      <tr class="bot total ${m.tom <= AC.mtow && cgOk(m.toCg) ? 'ok' : 'bad'}"><td class="wpt">Takeoff <small class="label">max ${AC.mtow}</small></td><td>${m.tom.toFixed(1)}</td><td>${m.toCg.toFixed(3)}</td><td>${(m.tom * m.toCg).toFixed(1)}</td></tr>
-      <tr class="bot"><td class="wpt">Trip fuel <small class="label">${t.trip.toFixed(1)} L</small></td><td>−${tripKg.toFixed(1)}</td><td>${AC.arms.fuel.toFixed(3)}</td><td>−${(tripKg * AC.arms.fuel).toFixed(1)}</td></tr>
-      <tr class="bot total ${m.lm <= AC.mtow && cgOk(m.ldgCg) ? 'ok' : 'bad'}"><td class="wpt">Landing</td><td>${m.lm.toFixed(1)}</td><td>${m.ldgCg.toFixed(3)}</td><td>${(m.lm * m.ldgCg).toFixed(1)}</td></tr>
-    </tbody></table></div>
-    <div class="group">
-      ${row(`Takeoff mass ≤ ${AC.mtow} kg`, kg(m.tom), m.tom <= AC.mtow ? 'check-ok' : 'check-bad')}
-      ${row(`Takeoff CG ${AC.cg[0]} – ${AC.cg[1]} m`, `${m.toCg.toFixed(3)} m`, cgOk(m.toCg) ? 'check-ok' : 'check-bad')}
-      ${row(`Landing CG ${AC.cg[0]} – ${AC.cg[1]} m`, `${m.ldgCg.toFixed(3)} m`, cgOk(m.ldgCg) ? 'check-ok' : 'check-bad')}
+    const ok = (b) => (b ? 'ok' : 'bad');
+    const tr = (label, mass, arm, moment, cls = '') => `<tr class="bot ${cls}"><td class="wpt">${label}</td><td>${n(mass)}</td><td>${arm == null ? '' : n(arm, ac.armDp)}</td><td>${fmtMoment(m, moment)}</td></tr>`;
+    html += `<div class="group-title"><span>Sheet · ${esc(ac.sheet)}</span></div>
+    <div class="nl-wrap"><table class="nl mbt"><thead><tr><th></th><th>Mass (${U})</th><th>Arm (${A})</th><th>Moment (${mom})</th></tr></thead><tbody>`;
+    for (const r of m.rows) {
+      if (r.id === 'fuel') {
+        if (ac.mzfw) html += tr(`Zero-fuel <small class="label">max ${ac.mzfw}</small>`, m.zfw.mass, m.zfw.moment / m.zfw.mass, m.zfw.moment, `total ${ok(m.zfw.mass <= ac.mzfw)}`);
+        html += tr(`Fuel <small class="label">${r.litres} L</small>`, r.mass, r.arm, r.moment);
+        if (m.ramp) html += tr(`Ramp <small class="label">max ${ac.ramp}</small>`, m.ramp.mass, m.ramp.arm, m.ramp.moment, `total ${ok(m.ramp.mass <= ac.ramp)}`);
+        continue;
+      }
+      html += tr(esc(r.label), r.mass, r.arm, r.moment);
+    }
+    html += tr(`Takeoff <small class="label">max ${m.mtow}</small>`, m.to.mass, m.to.arm, m.to.moment, `total ${ok(m.to.massOk && m.to.cgOk)}`);
+    html += tr(`Trip fuel <small class="label">${t.trip.toFixed(1)} L</small>`, -m.trip.mass, ac.fuelArm, -m.trip.mass * ac.fuelArm);
+    html += tr('Landing', m.ldg.mass, m.ldg.arm, m.ldg.moment, `total ${ok(m.ldg.massOk && m.ldg.cgOk)}`);
+    html += '</tbody></table></div>';
+    const lim = (mass) => { const l = cgLimitsAt(ac.envelope, Math.min(mass, m.mtow)); return l ? `${n(l[0], ac.armDp)} – ${n(l[1], ac.armDp)} ${A}` : ''; };
+    const pct = (arm) => (ac.mac ? ` (${m.pct(arm).toFixed(1)} % MAC)` : '');
+    html += `<div class="group">
+      ${row(`Takeoff mass ≤ ${m.mtow} ${U}`, `${n(m.to.mass)} ${U}`, m.to.massOk ? 'check-ok' : 'check-bad')}
+      ${row(`Takeoff C.G. ${lim(m.to.mass)}`, `${n(m.to.arm, ac.armDp)} ${A}${pct(m.to.arm)}`, m.to.cgOk ? 'check-ok' : 'check-bad')}
+      ${row(`Landing C.G. ${lim(m.ldg.mass)}`, `${n(m.ldg.arm, ac.armDp)} ${A}${pct(m.ldg.arm)}`, m.ldg.cgOk ? 'check-ok' : 'check-bad')}
+      ${m.issues.map((i) => row(esc(i), '✕', 'check-bad')).join('')}
     </div>`;
+  } else {
+    html += '<div class="group"><div class="empty">Enter the empty mass and moment to calculate.</div></div>';
   }
   html += `<div class="group">
       <div class="row"><span class="grow label">Fuel on board: use the real quantity checked with FISUP/Dispatcher, not an estimate (SOP).</span></div>
@@ -993,15 +1071,15 @@ function renderMB() {
     <label class="field full"><span>NOTAMs</span><input data-mb="notams" value="${esc(mbs.notams)}" placeholder="Relevant NOTAMs"></label>
   </div></div>
   <button class="btn primary wide" data-act="mbpdf">Download M&amp;B sheet (PDF)</button>
-  <p class="note">Arms from the P2008 JC M&amp;B sheet: pilot/copilot 1.800 m, baggage 2.417 m, fuel 2.209 m, fuel density ${AC.fuelDensity} kg/L. Use the real fuel quantity from FISUP and real masses (SOP). Other aircraft types will be added from their M&amp;B sheets.</p>`;
+  <p class="note">Arms, limits and envelope from the ${esc(ac.sheet)} (fleet M&amp;B overview, 19/07/2025). Fuel ${ac.unit === 'lb' ? '6 lb/US gal' : '0.72 kg/L'}. Masses are entered in kg${ac.unit === 'lb' ? ' and converted to lb (× 2.20462)' : ''}.</p>`;
   panels.mb.innerHTML = html;
 }
 panels.mb.addEventListener('change', (e) => {
   const t = e.target;
   if (t.dataset.ff) {
     const k = t.dataset.ff;
-    if (k === 'type') { state.flight.type = t.value; state.flight.reg = fleetType(t.value).regs[0] || ''; }
-    else state.flight[k] = k === 'reg' || k === 'weather' ? t.value : (t.value === '' ? '' : Math.max(0, +t.value));
+    if (k === 'type') { state.flight.type = t.value; state.flight.reg = Object.keys(acOf(t.value).regs)[0] || ''; state.flight.fob = Math.min(+state.flight.fob || 0, acOf(t.value).fuelMaxL) || acOf(t.value).fuelMaxL; }
+    else state.flight[k] = k === 'reg' || k === 'weather' ? (k === 'reg' ? t.value.toUpperCase().trim() : t.value) : (t.value === '' ? '' : Math.max(0, +t.value));
   } else if (t.dataset.mb) {
     state.mb[t.dataset.mb] = t.dataset.mb === 'studentCode' ? t.value.toUpperCase().trim() : t.value;
   } else if (t.dataset.mbflag) {
@@ -1013,27 +1091,13 @@ panels.mb.addEventListener('click', (e) => { if (e.target.closest('[data-act=mbp
 
 async function downloadMbPdf() {
   const m = result.mb, f = state.flight;
-  if (!m) return toast('Choose a registration first.');
-  const reg = AC.regs[f.reg];
-  const t = mbTrip();
-  const fuelKg = f.fob * AC.fuelDensity, tripKg = t.trip * AC.fuelDensity;
-  const cgOk = (cg) => cg >= AC.cg[0] && cg <= AC.cg[1];
+  if (!m) return toast('Choose a registration (or enter the empty mass) first.');
   try {
-    const bytes = await buildMbPdf({
+    const bytes = await buildMbPdf(m, {
       date: flightTime().toLocaleDateString('en-GB'), reg: f.reg, studentCode: state.mb.studentCode,
       weather: f.weather, notams: state.mb.notams,
-      rows: {
-        empty: [reg[0], reg[1] / reg[0], reg[1]],
-        pilot: [+f.pilot || 0, AC.arms.pilot, (+f.pilot || 0) * AC.arms.pilot],
-        copilot: [+f.copilot || 0, AC.arms.copilot, (+f.copilot || 0) * AC.arms.copilot],
-        baggage: [+f.baggage || 0, AC.arms.baggage, (+f.baggage || 0) * AC.arms.baggage],
-        fuel: [fuelKg, AC.arms.fuel, fuelKg * AC.arms.fuel],
-        trip: [tripKg, AC.arms.fuel, tripKg * AC.arms.fuel],
-      },
-      to: [m.tom, m.toCg, m.tom * m.toCg, m.tom <= AC.mtow, cgOk(m.toCg)],
-      ldg: [m.lm, m.ldgCg, m.lm * m.ldgCg, m.lm <= AC.mtow, cgOk(m.ldgCg)],
     }, planData());
-    saveBlob(bytes, `MB_${f.reg}_${flightTime().toISOString().slice(0, 10)}.pdf`);
+    saveBlob(bytes, `MB_${f.reg || f.type}_${flightTime().toISOString().slice(0, 10)}.pdf`);
     toast('M&B sheet ready');
   } catch (err) { console.error(err); toast('Could not build the PDF: ' + err.message); }
 }
@@ -1041,11 +1105,11 @@ async function downloadMbPdf() {
 function renderMbSummary() {
   const m = result.mb;
   const set = (id, v, ok) => { const el = document.getElementById(id); el.textContent = v; el.className = 'v ' + (ok == null ? '' : ok ? 'ok' : 'bad'); };
-  if (!m) return;
-  const cgOk = (cg) => cg >= AC.cg[0] && cg <= AC.cg[1];
-  set('mTom', `${m.tom.toFixed(1)} kg`, m.tom <= AC.mtow);
-  set('mCg', `${m.toCg.toFixed(3)} m`, cgOk(m.toCg));
-  set('mLm', `${m.lm.toFixed(1)} kg`, cgOk(m.ldgCg));
+  if (!m) { set('mTom', '—'); set('mCg', '—'); set('mLm', '—'); return; }
+  const ac = m.ac;
+  set('mTom', `${m.to.mass.toFixed(1)} ${ac.unit}`, m.to.massOk);
+  set('mCg', `${m.to.arm.toFixed(ac.armDp)} ${ac.armUnit}`, m.to.cgOk);
+  set('mLm', `${m.ldg.mass.toFixed(1)} ${ac.unit}`, m.ldg.massOk && m.ldg.cgOk);
 }
 document.getElementById('btnMbPdf').addEventListener('click', downloadMbPdf);
 
@@ -1120,8 +1184,8 @@ function planIssues() {
   // fuel
   result.fuel.checks.forEach((c) => { if (!c.ok) issues.push({ level: 'bad', text: c.text + ' — not met' }); });
   if (f.taxi === '') issues.push({ level: 'info', text: 'Taxi fuel not entered (Fuel tab)' });
-  if (dep && dest && dep.icao !== dest.icao && (+f.fob || 0) < AC.fuelCapacity) issues.push({ level: 'warn', text: 'Cross-country: tanks should be full before the flight (within M&B limits)' });
-  if (result.mb && !result.mb.ok) issues.push({ level: 'bad', text: 'Mass & balance outside limits' });
+  if (dep && dest && dep.icao !== dest.icao && (+f.fob || 0) < acOf(f.type).fuelMaxL) issues.push({ level: 'warn', text: 'Cross-country: tanks should be full before the flight (within M&B limits)' });
+  if (result.mb && !result.mb.ok) issues.push({ level: 'bad', text: `Mass & balance: ${result.mb.issues.join('; ')}` });
   // solo + aerodrome specifics
   const solo = soloEntryIssue(); if (solo) issues.push({ level: 'bad', text: solo });
   if (dest && FULL_STOP.includes(dest.icao)) issues.push({ level: 'info', text: `${dest.icao} requires a full-stop landing` });
@@ -1142,7 +1206,7 @@ function dedupe(list) {
   const seen = new Set();
   return list.filter((i) => (seen.has(i.text) ? false : seen.add(i.text)));
 }
-const hhmmZ = (d) => `${String(d.getUTCHours()).padStart(2, '0')}${String(d.getUTCMinutes()).padStart(2, '0')}Z`;
+const hhmmZ = zl;
 
 let wxState = { key: '', data: null, err: null, loading: false };
 async function loadWeather(force = false) {
@@ -1160,18 +1224,45 @@ function weatherIssues() {
   if (!wxState.data) return [];
   const f = state.flight;
   const ft = fleetType(f.type);
-  const xwLimit = ft.xwind ? (f.solo ? ft.xwind.solo : ft.xwind.fi) : null;
+  const xwLimit = ft.xwind ? (f.solo ? ft.xwind.solo ?? ft.xwind.fi : ft.xwind.fi) : null;
   const { to, ldg, altArr } = times();
   const out = [];
   const list = [[endpoint('main', 0), to], [endpoint('main', -1), ldg], [endpoint('alt', -1), altArr]];
   for (const [ad, t] of list) {
     if (!ad) continue;
-    out.push(...assess(ad.icao, wxState.data[ad.icao], t, t, { solo: f.solo, xwLimit }).issues);
+    out.push(...assess(ad.icao, wxState.data[ad.icao], t, t, { solo: f.solo, xwLimit, hwLimit: ft.headwind ? (f.solo ? ft.headwind.solo : ft.headwind.fi) : null }).issues);
   }
   return out;
 }
 
 function copyBtn(id) { return `<div class="copy-row"><button class="btn small" data-copy="${id}">Copy</button></div>`; }
+
+// NOTAM copy fetched in CI every 3 h (data/notams.json). Shown for the flight window ±1 h;
+// ICARO stays the official source and is linked above.
+let notamData = null;
+fetch('data/notams.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : null)).then((d) => { notamData = d; if (tab === 'brief') renderPanels(); }).catch(() => {});
+function notamTime(v) {
+  if (!v || /PERM/i.test(v)) return null;
+  let m = String(v).match(/^(\d{2})\/(\d{2})\/(\d{4})\s*(\d{2})(\d{2})/); // MM/DD/YYYY HHMM (UTC)
+  if (m) return Date.UTC(+m[3], +m[1] - 1, +m[2], +m[4], +m[5]);
+  m = String(v).match(/^(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})/); // YYMMDDHHMM
+  if (m) return Date.UTC(2000 + +m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
+  const t = Date.parse(v); return Number.isFinite(t) ? t : null;
+}
+function notamHtml(ads) {
+  if (!notamData || !notamData.ok || !notamData.notams) return '<div class="row"><span class="grow label">Automatic NOTAM copy not available — read them on ICARO.</span></div>';
+  const t0 = flightTime().getTime() - 3600e3, t1 = flightTime().getTime() + ((result?.main.totals.timeSec || 0) + 3600) * 1000;
+  let html = '';
+  for (const ad of ads) {
+    const list = (notamData.notams[ad] || []).filter((n) => { const a = notamTime(n.from), b = notamTime(n.to); return (a == null || a <= t1) && (b == null || b >= t0); });
+    const key = (n) => /\bAD\b.*\bCLSD\b|\bRWY\b.*\bCLSD\b|CLOSED|\bU\/S\b|UNSERVICEABLE|NOT AVBL|FUEL|AVGAS|\bCLSD\b/i.test(n.text);
+    html += `<div class="wx"><div class="wx-head"><b>${ad}</b><span class="label">${list.length} active for your flight</span>${list.some(key) ? '<span class="badge warn">CHECK</span>' : ''}</div>`;
+    html += list.length ? list.map((n) => `<div class="mono${key(n) ? ' warn' : ''}" style="margin-top:4px">${esc(n.text)}</div>`).join('') : '<div class="label">No NOTAMs in the copy for your time.</div>';
+    html += '</div>';
+  }
+  html += `<div class="row"><span class="grow label">Copy from ${esc(notamData.source || 'FAA NOTAM Search')}, fetched ${esc(notamData.fetched || '')} — confirm on ICARO before flight.</span></div>`;
+  return html;
+}
 
 function renderBriefing() {
   const f = state.flight;
@@ -1198,24 +1289,26 @@ function renderBriefing() {
     shown.add(ad.icao);
     const w = wxState.data[ad.icao] || {};
     const ft = fleetType(f.type);
-    const a = assess(ad.icao, w, t, t, { solo: f.solo, xwLimit: ft.xwind ? (f.solo ? ft.xwind.solo : ft.xwind.fi) : null });
+    const a = assess(ad.icao, w, t, t, { solo: f.solo, xwLimit: ft.xwind ? (f.solo ? ft.xwind.solo ?? ft.xwind.fi : ft.xwind.fi) : null, hwLimit: ft.headwind ? (f.solo ? ft.headwind.solo : ft.headwind.fi) : null });
     const st = a.issues.some((i) => i.level === 'bad') ? ['bad', 'BELOW MINIMA'] : a.issues.some((i) => i.level === 'warn') ? ['warn', 'CHECK'] : (w.metar || w.taf) ? ['ok', 'OK'] : ['muted', 'NO DATA'];
     html += `<div class="wx"><div class="wx-head"><b>${ad.icao}</b><span class="label">${role} · ${hhmmZ(t)} ±1 h</span><span class="badge ${st[0]}">${st[1]}</span></div>
       ${w.metar ? `<div class="label" style="font-size:12px">${esc(metarSummary(w.metar))}${a.xw ? ` · best RWY ${a.xw.rwy}: crosswind ${a.xw.xw} kt` : ''}</div><div class="mono">${esc(w.metar.rawOb)}</div>` : '<div class="label">No METAR</div>'}
       ${w.taf ? `<div class="mono" style="margin-top:4px">${esc(w.taf.rawTAF)}</div>` : ''}</div>`;
   }
-  html += `</div><p class="note">Limits ${f.solo ? 'solo: visibility 7000 m, ceiling 2500 ft' : 'with FI: visibility 5000 m, ceiling 1500 ft'} BKN/OVC, ±1 h of your time there; crosswind ${fleetType(f.type).xwind ? `${f.solo ? fleetType(f.type).xwind.solo : fleetType(f.type).xwind.fi} kt` : 'per aircraft SOP'}. Also brief surface pressure charts, SIGWX and wind charts (SOP briefing order). Source: aviationweather.gov.</p>`;
+  html += `</div><p class="note">Limits ${f.solo ? 'solo: visibility 7000 m, ceiling 2500 ft' : 'with FI: visibility 5000 m, ceiling 1500 ft'} BKN/OVC, ±1 h of your time there; crosswind ${fleetType(f.type).xwind ? `${f.solo ? fleetType(f.type).xwind.solo ?? fleetType(f.type).xwind.fi : fleetType(f.type).xwind.fi} kt` : 'per aircraft SOP'}${fleetType(f.type).headwind ? `, headwind ${f.solo ? fleetType(f.type).headwind.solo : fleetType(f.type).headwind.fi} kt` : ''}${fleetType(f.type).gustNote ? ` (${fleetType(f.type).gustNote})` : ''}. Also brief surface pressure charts, SIGWX and wind charts (SOP briefing order). Source: aviationweather.gov.</p>`;
 
   // 2. NOTAMs
+  const notamAds = [dep, dest, alt].filter(Boolean).map((a) => a.icao).filter((x, i, arr) => arr.indexOf(x) === i);
   html += `<div class="group-title"><span>2 · NOTAMs</span></div><div class="group">
-    <div class="row"><span class="grow">Aerodromes: ${[dep, dest, alt].filter(Boolean).map((a) => a.icao).filter((x, i, arr) => arr.indexOf(x) === i).join(', ') || '—'} — check every alternate individually</span><a class="btn small" href="https://notampib.enaire.es/icaro" target="_blank" rel="noopener">ICARO ↗</a></div>
-    <div class="row"><span class="grow">En-route NOTAMs (Phase 3 manual)</span><a class="btn small" href="https://insigniavfr.enaire.es" target="_blank" rel="noopener">Insignia VFR ↗</a></div>
-  </div>`;
+    <div class="row"><span class="grow">Aerodromes: ${notamAds.join(', ') || '—'} — check every alternate individually</span><a class="btn small" href="https://notampib.enaire.es/icaro" target="_blank" rel="noopener">ICARO ↗</a></div>
+    <div class="row"><span class="grow">En-route NOTAMs (Phase 3 manual)</span><a class="btn small" href="https://insigniavfr.enaire.es" target="_blank" rel="noopener">Insignia VFR ↗</a></div>`;
+  html += notamHtml(notamAds);
+  html += '</div>';
 
   // 3. ATC flight plan
   const tas = result.main.rows.find((r) => r.phase === 'cruise')?.tas || 100;
   const night = (() => { const s2 = sunTimes(to, (dep || LEBG).lat, (dep || LEBG).lon); return s2.set && ldg > s2.set; })();
-  const endMin = Math.floor(((+f.fob || 0) / SOP.ffCruise) * 60);
+  const endMin = Math.floor(((+f.fob || 0) / planSop().ffCruise) * 60);
   const fpl = dep && dest ? buildFpl({
     callsign: f.callsign, reg: f.reg, acType: fleetType(f.type).icao, dep: dep.icao, dest: dest.icao,
     alts: [alt?.icao].filter(Boolean), eobt: new Date(to.getTime() - 10 * 60e3), tas,
@@ -1349,7 +1442,7 @@ const plansPop = document.getElementById('plansPop');
 function planName() {
   const dep = endpoint('main', 0)?.icao || state.main.waypoints[0]?.name || '?';
   const dest = endpoint('main', -1)?.icao || state.main.waypoints.at(-1)?.name || '?';
-  return `${dep} → ${dest} · ${dFmt.format(flightTime())} ${tFmt.format(flightTime())}`;
+  return `${dep} → ${dest} · ${dFmt.format(flightTime())} ${zl(flightTime())}`;
 }
 function renderPlans() {
   const list = listPlans();
@@ -1457,6 +1550,54 @@ document.getElementById('profileToggle').addEventListener('click', () => {
   save(); setTimeout(renderProfile, 300);
 });
 new ResizeObserver(() => renderProfile()).observe(dock);
+
+// Drag the planned altitude in the profile: changes the level of the leg under the finger,
+// snapped to 100 or 500 ft; TOC/TOD are recalculated from the new levels.
+const altStep = () => state.view.altStep || 500;
+const altStepBtn = document.getElementById('altStepBtn');
+const syncStepBtn = () => { altStepBtn.textContent = `Drag · ${altStep()} ft`; };
+altStepBtn.addEventListener('click', () => { state.view.altStep = altStep() === 500 ? 100 : 500; syncStepBtn(); save(); toast(`Profile drag snaps to ${altStep()} ft`); });
+syncStepBtn();
+function legAtDistance(d) {
+  const nl = result && result[state.active];
+  if (!nl || !nl.rows.length) return null;
+  let acc = 0;
+  for (const r of nl.rows) { acc += r.dist; if (d <= acc + 1e-6) return r.legIndex; }
+  return nl.rows[nl.rows.length - 1].legIndex;
+}
+for (const id of ['profileCanvas', 'profileCanvasSheet']) {
+  const cv = document.getElementById(id);
+  if (!cv) continue;
+  let drag = null, raf = 0;
+  const apply = (e) => {
+    const at = profileAt(cv, e.clientX, e.clientY);
+    if (!at || !drag) return;
+    const step = altStep();
+    const alt = Math.max(1000, Math.min(14500, Math.round(at.alt / step) * step));
+    const w = route().waypoints[drag.leg];
+    if (!w || parseAlt(w.alt) === alt) return;
+    w.alt = alt;
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(() => {
+      update();
+      const info = id === 'profileCanvas' ? document.getElementById('profileInfo') : document.getElementById('profileNoteSheet');
+      if (info) info.textContent = `${route().waypoints[drag.leg - 1]?.name || ''} → ${w.name}: ${alt} ft`;
+    });
+  };
+  cv.addEventListener('pointerdown', (e) => {
+    const at = profileAt(cv, e.clientX, e.clientY);
+    const leg = at && legAtDistance(at.d);
+    if (!leg) return;
+    drag = { leg };
+    cv.setPointerCapture(e.pointerId);
+    e.preventDefault();
+    apply(e);
+  });
+  cv.addEventListener('pointermove', (e) => { if (drag) apply(e); });
+  const end = () => { if (!drag) return; drag = null; update({ rerenderPanels: true }); };
+  cv.addEventListener('pointerup', end);
+  cv.addEventListener('pointercancel', end);
+}
 
 /* ---------------- Update loop ---------------- */
 

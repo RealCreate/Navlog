@@ -8,6 +8,8 @@
 // TAF must be at or above minima from 1 h before to 1 h after the time over the aerodrome.
 // CB forecast → the HT or CFI must be informed.
 
+import { zl } from './time.js';
+
 const API = 'https://aviationweather.gov/api/data';
 const SM_TO_M = 1609.34;
 
@@ -82,7 +84,7 @@ function crosswind(ad, wdir, wspd, gust) {
  * Checks an aerodrome against the school minima for a time window [from, to].
  * Returns { metar, taf, issues: [{level:'bad'|'warn'|'info', text}] }.
  */
-export function assess(ad, wx, from, to, { solo = false, xwLimit = null } = {}) {
+export function assess(ad, wx, from, to, { solo = false, xwLimit = null, hwLimit = null } = {}) {
   const lim = solo ? MINIMA.solo : MINIMA.fi;
   const issues = [];
   const who = solo ? 'solo' : 'with FI';
@@ -93,6 +95,7 @@ export function assess(ad, wx, from, to, { solo = false, xwLimit = null } = {}) 
     if (hasCb(o)) issues.push({ level: 'warn', text: `${ad} ${label}: CB / thunderstorm — inform the HT or CFI (SOP)` });
     const xw = crosswind(ad, o.wdir, o.wspd, o.wgst);
     if (xw && xwLimit && xw.xw > xwLimit) issues.push({ level: 'bad', text: `${ad} ${label}: crosswind ${xw.xw} kt on RWY ${xw.rwy} above the ${xwLimit} kt limit (${who})` });
+    if (xw && hwLimit && xw.hw > hwLimit) issues.push({ level: 'bad', text: `${ad} ${label}: headwind ${xw.hw} kt on RWY ${xw.rwy} above the ${hwLimit} kt limit (${who})` });
     if (xw && xw.hw < -5) issues.push({ level: 'warn', text: `${ad} ${label}: ${-xw.hw} kt tailwind on the best runway (${xw.rwy})` });
     return xw;
   };
@@ -116,7 +119,7 @@ export function assess(ad, wx, from, to, { solo = false, xwLimit = null } = {}) 
   return { metar: wx?.metar || null, taf: wx?.taf || null, xw: metarXw, issues: issues.filter((i) => (seen.has(i.text) ? false : seen.add(i.text))) };
 }
 
-const hhmm = (s) => { const d = new Date(s * 1000); return `${String(d.getUTCHours()).padStart(2, '0')}${String(d.getUTCMinutes()).padStart(2, '0')}Z`; };
+const hhmm = (s) => zl(new Date(s * 1000));
 
 export function metarSummary(m) {
   if (!m) return '';

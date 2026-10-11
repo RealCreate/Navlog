@@ -2,6 +2,8 @@
 // plus helpers that turn a plan into the briefing items (FPL, departure/arrival briefing, TEM).
 
 // Aerodromes students fly to under VFR (to be confirmed with the school). LEBB: IFR only.
+import { hhmmZl } from './time.js';
+
 export const APPROVED = ['LEBG', 'LERJ', 'LEVT', 'LEVD', 'LELN', 'LEPP', 'LESO', 'LEHC', 'LEXJ', 'LESA'];
 export const IFR_ONLY = ['LEBB'];
 export const EASY_FIRST = ['LEVD', 'LELN', 'LEVT', 'LERJ', 'LEBG', 'LESA', 'LEPP', 'LEXJ', 'LESO', 'LEHC'];
@@ -54,7 +56,14 @@ export function aerodromeOpen(icao, t) {
   const tbl = HOURS_UTC[icao];
   if (!tbl) {
     const c = CLOSING_LOCAL[icao];
-    return { known: false, text: c ? `closes ${typeof c === 'string' ? c : c[t.getDay()]} LT (Phase 3 manual)` : 'check AD 2.3 for hours' };
+    const lt = typeof c === 'string' ? c : c && c[t.getDay()];
+    let txt = lt;
+    if (/^\d{1,2}:\d{2}$/.test(lt || '')) {
+      const [h, m] = lt.split(':').map(Number);
+      const u = (h * 60 + m - (isEuSummer(t) ? 120 : 60) + 1440) % 1440;
+      txt = `${String(Math.floor(u / 60)).padStart(2, '0')}:${String(u % 60).padStart(2, '0')}Z (${lt})`;
+    }
+    return { known: false, text: c ? `closes ${txt} (Phase 3 manual)` : 'check AD 2.3 for hours' };
   }
   const season = isEuSummer(t) ? 'summer' : 'winter';
   const s = tbl[season];
@@ -63,11 +72,12 @@ export function aerodromeOpen(icao, t) {
   const o = minutes(s.open[day]), c = minutes(s.close[day]);
   let open = now >= o && now <= c;
   if (open && s.gapSun && day === 6 && now > minutes(s.gapSun[0]) && now < minutes(s.gapSun[1])) open = false;
-  let text = `${season} hours today ${s.open[day]}–${s.close[day]} UTC`;
-  if (s.gapSun && day === 6) text += ` (closed ${s.gapSun[0]}–${s.gapSun[1]})`;
+  const z = (h) => hhmmZl(h, t);
+  let text = `${season} hours today ${z(s.open[day])}–${z(s.close[day])}`;
+  if (s.gapSun && day === 6) text += ` (closed ${z(s.gapSun[0])}–${z(s.gapSun[1])})`;
   if (s.afis) {
     const a0 = s.afis[0][day], a1 = s.afis[1][day];
-    text += a0 === '-' ? ' · no AFIS today' : ` · AFIS ${a0}–${a1} UTC`;
+    text += a0 === '-' ? ' · no AFIS today' : ` · AFIS ${z(a0)}–${z(a1)}`;
   }
   return { known: true, open, text };
 }

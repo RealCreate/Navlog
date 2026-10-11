@@ -59,9 +59,9 @@ export const PlacesLayer = L.Layer.extend({
       const box = { x: p.x - w / 2, y: p.y - size - 5, w, h: size + 3 };
       if (hit(box)) continue;
       boxes.push(box);
-      ctx.lineWidth = 2.5; ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+      ctx.lineWidth = 1.6; ctx.strokeStyle = 'rgba(255,255,255,0.6)'; // thin, soft halo — printed-chart look
       ctx.strokeText(text, p.x, p.y - size / 2 - 3);
-      ctx.fillStyle = rank === 0 ? 'rgba(25,25,30,0.9)' : rank === 1 ? 'rgba(35,35,42,0.85)' : 'rgba(55,55,62,0.8)';
+      ctx.fillStyle = rank === 0 ? 'rgb(30,30,36)' : rank === 1 ? 'rgb(40,40,48)' : 'rgb(60,60,68)';
       ctx.fillText(text, p.x, p.y - size / 2 - 3);
       if (rank === 2) { ctx.beginPath(); ctx.arc(p.x, p.y, 1.5, 0, Math.PI * 2); ctx.fillStyle = 'rgba(55,55,62,0.7)'; ctx.fill(); }
     }
