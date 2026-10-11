@@ -631,8 +631,13 @@ function planSop() {
   return { ...SOP, tasBase: pick('tasBase'), ffCruise: pick('ffCruise'), ffClimb: pick('ffClimb'), ffDescent: pick('ffDescent') };
 }
 
+// School rule: tanks are always full when departing from the base (LEBG / LERJ) unless stated
+// otherwise — FOB follows the type's full tanks until the student types another value.
+const BASES = ['LEBG', 'LERJ'];
 function compute() {
   const f = state.flight;
+  const dep0 = endpoint('main', 0);
+  if (!f.fobSet && (!dep0 || BASES.includes(dep0.icao))) f.fob = acOf(f.type).fuelMaxL;
   const ta = endpoint('main', 0)?.ta || 6000;
   const sop = planSop();
   const main = computeNavlog({ ...state.main, fob: +f.fob || 0, ta }, sop);
@@ -1004,7 +1009,7 @@ function renderFuel() {
   const row = (l, v, cls = '') => `<div class="row ${cls}"><span class="grow label">${l}</span><span class="value">${v}</span></div>`;
   let html = `<div class="group-title"><span>Fuel on board</span></div>
   <div class="group"><div class="row" style="gap:6px;flex-wrap:wrap">
-    <label class="field"><span>FOB (L) — from FISUP</span><input data-ff="fob" inputmode="decimal" value="${esc(f.fob)}"></label>
+    <label class="field"><span>FOB (L) — ${f.fobSet ? 'from FISUP' : 'full tanks (base rule)'}</span><input data-ff="fob" inputmode="decimal" value="${esc(f.fob)}"></label>
     <label class="field"><span>Taxi (L)</span><input data-ff="taxi" inputmode="decimal" value="${esc(f.taxi)}" placeholder="from POH"></label>
     <label class="field"><span>Extra (L)</span><input data-ff="extra" inputmode="decimal" value="${esc(f.extra)}" placeholder="PIC"></label>
   </div></div>
@@ -2430,4 +2435,5 @@ if ('serviceWorker' in navigator && location.protocol === 'https:') {
 }
 
 // Expose for debugging in the console
+document.addEventListener('change', (e) => { if (e.target.dataset && e.target.dataset.ff === 'fob') state.flight.fobSet = e.target.value !== ''; }, true);
 window.navlogApp = { map, get state() { return state; }, get result() { return result; } };
