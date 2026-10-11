@@ -84,7 +84,13 @@ export async function renderRouteMap(routes, { width = 2400, height = 1650, titl
         const f0 = done / legDist, f1 = (done + row.dist) / legDist;
         if (row.gs > 0 && !row.fixedMin) {
           const step = (row.gs / 60) * 2; // NM flown in 2 minutes
-          for (let d = step; d < row.dist - 0.2; d += step) bar(at(f0 + (d / row.dist) * (f1 - f0)), 13 * s, 4 * s, col);
+          for (let d = step; d < row.dist - 0.2; d += step) {
+            // amber with a dark edge so the marks stand out from the pink/blue track
+            const q = at(f0 + (d / row.dist) * (f1 - f0)), len = 15 * s;
+            g.save(); g.lineCap = 'round';
+            for (const [w, c2] of [[10 * s, '#1a1a1a'], [5.5 * s, '#ffb000']]) { g.strokeStyle = c2; g.lineWidth = w; g.beginPath(); g.moveTo(q.x - nx * len, q.y - ny * len); g.lineTo(q.x + nx * len, q.y + ny * len); g.stroke(); }
+            g.restore();
+          }
         }
         if (row.auto && (row.to === 'TOC' || row.to === 'TOD')) {
           const p = at(f1);

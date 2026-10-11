@@ -532,6 +532,7 @@ function drawRoutes() {
 function lerp(a, b, f) { return [a.lat + (b.lat - a.lat) * f, a.lon + (b.lon - a.lon) * f]; }
 
 // A short line across the route at position pos (pixels each side), as drawn on a paper chart.
+const TICK = '#ffb000'; // 2-minute marks (map and printed chart)
 function crossTick(a, b, pos, half, style) {
   const p = map.latLngToLayerPoint(pos);
   const pa = map.latLngToLayerPoint([a.lat, a.lon]), pb = map.latLngToLayerPoint([b.lat, b.lon]);
@@ -557,8 +558,9 @@ function drawLegAnnotations(key, rows, wps, isAlt) {
         const step = (r.gs / 60) * 2;
         for (let d = step; d < r.dist - 0.2; d += step) {
           const f = f0 + (d / r.dist) * (f1 - f0);
-          crossTick(a, b, lerp(a, b, f), 6, { color: '#fff', weight: 5, opacity: 0.9 }).addTo(routeLayer);
-          crossTick(a, b, lerp(a, b, f), 6, { color, weight: 2.2 }).addTo(routeLayer);
+          // amber with a dark edge so the marks stand out from the pink/blue track
+          crossTick(a, b, lerp(a, b, f), 7, { color: '#1a1a1a', weight: 6, opacity: 0.9 }).addTo(routeLayer);
+          crossTick(a, b, lerp(a, b, f), 7, { color: TICK, weight: 3 }).addTo(routeLayer);
         }
       }
       if (r.auto && (r.to === 'TOC' || r.to === 'TOD')) {
