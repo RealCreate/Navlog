@@ -25,7 +25,7 @@ jobs:
           for r in castilla-y-leon la-rioja; do curl -fsSL "https://download.geofabrik.de/europe/spain/$r-latest.osm.pbf" -o $r.pbf; done
           osmium merge castilla-y-leon.pbf la-rioja.pbf -o all.pbf
           osmium extract -b -4.35,41.85,-2.15,42.95 all.pbf -o box.pbf --overwrite
-          osmium tags-filter box.pbf w/waterway=river w/natural=water r/natural=water n/place=city,town,village w/landuse=residential -o feat.pbf --overwrite
+          osmium tags-filter box.pbf w/waterway=river w/natural=water r/natural=water n/place=city,town,village w/landuse=residential w/highway=motorway,trunk,primary,secondary,tertiary,motorway_link,trunk_link w/railway=rail -o feat.pbf --overwrite
           osmium export feat.pbf -f geojsonseq -o out/feat.geojsonseq --overwrite
           ls -la out
       - name: Publish to previews branch
