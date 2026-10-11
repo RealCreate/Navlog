@@ -20,21 +20,9 @@ jobs:
         run: mkdir -p out && python3 src/tools/build-aip.py out/aip.json || true
       - name: Probe
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq gdal-bin python3-gdal
+          sudo apt-get update -qq && sudo apt-get install -y -qq gdal-bin python3-gdal python3-numpy python3-pil
           mkdir -p out
-          curl -fsSL https://aip.enaire.es/AIP/CartasInsigniaImpresas-es.html -o page.html
-          grep -oiE 'recursos/descargas/VFR500/[A-Za-z0-9_]+[.]zip' page.html | sort -u > out/sheets.txt
-          for path in $(cat out/sheets.txt); do
-            n=$(basename $path .zip)
-            curl -fsSL "https://aip.enaire.es/$path" -o z.zip || continue
-            mkdir -p x && unzip -q -o z.zip -d x
-            tif=$(find x -iname '*.tif*' | head -1)
-            echo "$n $(du -h z.zip | cut -f1) $(gdalinfo "$tif" | grep -E 'Size is')" >> out/sizes.txt
-            python3 src/tools/probe-bounds.py "$tif" "$n" >> out/bounds.txt || true
-            opts=""; gdalinfo "$tif" | grep -q 'Color Table' && opts="-expand rgb"
-            gdal_translate -q $opts -of PNG -outsize 700 0 "$tif" "out/$n.png" || true
-            rm -rf x z.zip
-          done
+          /usr/bin/python3 src/tools/probe-mock.py out
           ls -la out
       - name: Publish to previews branch
         run: |
