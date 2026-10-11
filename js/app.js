@@ -443,8 +443,25 @@ function wpIcon(n, alt, sel) {
   return L.divIcon({ className: '', iconSize: [22, 22], iconAnchor: [11, 11], html: `<div class="wpt-marker ${alt ? 'alt' : ''} ${sel ? 'sel' : ''}">${n}</div>` });
 }
 
+// Mission leg not planned yet: thin dotted guide from the last point to the target aerodrome.
+// Display only — never part of the route, the navlog or any PDF.
+function drawMissionGuide() {
+  const m = state.mission, leg = m && m.legs.find((l) => l.id === m.active);
+  if (!leg) return;
+  const guide = (from, icao, color) => {
+    const ad = icao && adByIcao(icao);
+    if (!from || !ad || from.ref === icao) return;
+    L.polyline([[from.lat, from.lon], [ad.lat, ad.lon]], { pane: 'routes', color, weight: 2, opacity: 0.75, dashArray: '2 7', lineCap: 'round', interactive: false }).addTo(routeLayer);
+    L.circleMarker([ad.lat, ad.lon], { pane: 'routes', radius: 13, color, weight: 2, dashArray: '3 4', fill: false, interactive: false }).addTo(routeLayer);
+  };
+  if (state.active === 'main') return guide(state.main.waypoints.at(-1), leg.target, '#d1009a');
+  const altFrom = state.alt.waypoints.at(-1) || adByIcao(leg.target);
+  if (leg.altTarget && state.alt.waypoints.length < 2) guide(altFrom && { lat: altFrom.lat, lon: altFrom.lon, ref: altFrom.icao || altFrom.ref }, leg.altTarget, '#0a84ff');
+}
+
 function drawRoutes() {
   routeLayer.clearLayers();
+  drawMissionGuide();
   for (const key of ['alt', 'main']) {
     const r = state[key];
     const isAlt = key === 'alt';
@@ -572,6 +589,9 @@ function drawLegAnnotations(key, rows, wps, isAlt) {
 
 function fitRoute() {
   const all = [...state.main.waypoints, ...state.alt.waypoints];
+  const ml = state.mission && state.mission.legs.find((l) => l.id === state.mission.active);
+  const tgt = ml && ml.target && adByIcao(ml.target);
+  if (tgt) all.push({ lat: tgt.lat, lon: tgt.lon });
   if (all.length > 1) map.fitBounds(L.latLngBounds(all.map((w) => [w.lat, w.lon])), { paddingBottomRight: [40, isWide() ? 240 : sheetH() + 40], paddingTopLeft: [isWide() ? 440 : 40, 120], maxZoom: 11 });
 }
 
@@ -1813,6 +1833,9 @@ document.getElementById('btnHome').addEventListener('click', () => {
 document.getElementById('btnOffline').addEventListener('click', async () => {
   if (!chartMeta) return toast('VFR chart tiles are not available yet.');
   const all = [...state.main.waypoints, ...state.alt.waypoints];
+  const ml = state.mission && state.mission.legs.find((l) => l.id === state.mission.active);
+  const tgt = ml && ml.target && adByIcao(ml.target);
+  if (tgt) all.push({ lat: tgt.lat, lon: tgt.lon });
   let b = all.length ? L.latLngBounds(all.map((w) => [w.lat, w.lon])) : L.latLngBounds([[LEBG.lat, LEBG.lon], [LEBG.lat, LEBG.lon]]);
   b = b.pad(0.3);
   const pad = 0.4; // ~25 NM margin
@@ -1907,8 +1930,10 @@ function newLeg(label, chain, dep, dest, time, extra = {}) {
   const altAd = alt && adByIcao(alt);
   return {
     id: `L${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, label, chain, time,
-    main: { waypoints: [A, B].filter(Boolean).map(adWaypoint), stdDep: true, stdArr: true },
-    alt: altAd && B ? { waypoints: [adWaypoint(B), adWaypoint(altAd)], stdDep: false, stdArr: true } : { waypoints: [], stdDep: false, stdArr: false },
+    // only the departure: the destination is a target shown as a dotted guide until you plan the leg
+    main: { waypoints: [A].filter(Boolean).map(adWaypoint), stdDep: true, stdArr: true },
+    alt: { waypoints: [], stdDep: false, stdArr: true },
+    target: dest, altTarget: altAd ? altAd.icao : null,
     refuel: false, ...extra,
   };
 }
@@ -1922,8 +1947,7 @@ function createMission(type, d) {
   if (type === 'local') {
     m.legs.push(newLeg('Nav 1 · local', 'n1', base, base, t0));
     m.legs.push(newLeg('Nav 2 · reserve local', 'n2', base, base, t0));
-    const altAd = adByIcao(base === 'LEBG' ? 'LERJ' : 'LEBG');
-    m.sharedAlt = { waypoints: [adWaypoint(adByIcao(base)), adWaypoint(altAd)], stdDep: false, stdArr: true };
+    m.sharedAlt = { waypoints: [], stdDep: false, stdArr: true };
   } else if (type === 'xc') {
     m.legs.push(newLeg(`Outbound · ${base} → ${d.dest}`, 'a', base, d.dest, t0));
     m.legs.push(newLeg(`Inbound · ${d.dest} → ${base}`, 'a', d.dest, base, later(120)));
@@ -1943,6 +1967,7 @@ function createMission(type, d) {
   openLeg(m.legs[0].id, true);
   state.mode = 'mission'; showPanels(); renderPanels();
 }
+const legPlanned = (l) => (l.main.waypoints || []).length >= 2 && (!l.target || l.main.waypoints.at(-1).ref === l.target);
 const legChainIndexIn = (m, leg) => m.legs.filter((l) => l.chain === leg.chain).indexOf(leg);
 
 function openLeg(id, quiet) {
@@ -1995,12 +2020,12 @@ function renderMission() {
   let html = `<div class="group-title"><span>${names[m.type]}</span><button class="btn small primary" data-act="msPdf">Download all (briefing + navlogs + M&amp;B)</button></div><div class="group">`;
   for (const leg of m.legs) {
     const f = figs.get(leg.id), i = legChainIndex(leg);
-    const planned = (leg.main.waypoints || []).length >= 3;
+    const planned = legPlanned(leg);
     const ok = planned && f.fuelOk && f.mbOk !== false && !f.issues.length;
     html += `<div class="wx${leg.id === m.active ? ' active' : ''}"><div class="wx-head"><b>${esc(leg.label)}</b>${leg.id === m.active ? '<span class="label">open</span>' : ''}<span class="badge ${ok ? 'ok' : planned ? 'bad' : 'warn'}">${ok ? 'OK' : planned ? 'CHECK' : 'TO PLAN'}</span></div>
-      ${planned ? '' : '<div class="label warn">Not planned yet — open it and add the departure/arrival reporting points and turning points.</div>'}
-      <div class="label">${f.dep?.icao || '?'} → ${f.dest?.icao || '?'}${f.alt ? ` · alt ${f.alt.icao}` : ''} · ${f.dist} NM · ${fmtHMS(f.timeSec).slice(0, 5)} · T/O ${zl(f.t)} → LDG ${zl(f.ldg)}</div>
-      <div class="label">FOB ${f.fob.toFixed(1)} L${i > 0 ? (leg.refuel ? ' (refuel: full tanks)' : ' (carried from the previous leg)') : ''} · trip ${f.trip.toFixed(1)} L · minimum ${f.required} L ${f.fuelOk ? '✓' : '✕'} · M&amp;B ${f.mbOk == null ? '—' : f.mbOk ? '✓' : '✕'}</div>
+      ${planned ? '' : `<div class="label">→ ${esc(leg.target || '')} · to plan — open it and tap your points; the dotted line is only a guide.</div>`}
+${planned ? `<div class="label">${f.dep?.icao || '?'} → ${planned ? f.dest?.icao || '?' : leg.target || '?'}${f.alt ? ` · alt ${f.alt.icao}` : leg.altTarget ? ` · alt ${leg.altTarget}` : ''} · ${f.dist} NM · ${fmtHMS(f.timeSec).slice(0, 5)} · T/O ${zl(f.t)} → LDG ${zl(f.ldg)}</div>
+      <div class="label">FOB ${f.fob.toFixed(1)} L${i > 0 ? (leg.refuel ? ' (refuel: full tanks)' : ' (carried from the previous leg)') : ''} · trip ${f.trip.toFixed(1)} L · minimum ${f.required} L ${f.fuelOk ? '✓' : '✕'} · M&amp;B ${f.mbOk == null ? '—' : f.mbOk ? '✓' : '✕'}</div>` : ''}
       ${f.issues.length ? `<div class="label warn">${f.issues.map(esc).join('<br>')}</div>` : ''}
       <div class="row" style="padding:6px 0 0">${i > 0 && m.type === 'tri' ? `<label class="tem-row" style="flex:1"><input type="checkbox" data-refuel="${leg.id}" ${leg.refuel ? 'checked' : ''}><span>Refuel at ${f.dep?.icao || ''}${f.dep && NO_REFUEL.includes(f.dep.icao) ? ' — no refuelling there (AIP)' : ' (only where AVGAS 100LL is available)'}</span></label>` : '<span class="grow"></span>'}
       <button class="btn small" data-open="${leg.id}">${leg.id === m.active ? 'Edit' : 'Open'}</button></div></div>`;
@@ -2024,12 +2049,12 @@ function missionChecks(figs) {
   const legs = m.legs.map((l) => ({ l, f: figs.get(l.id) }));
   const ads = (fs) => [...new Set(fs.flatMap(({ f }) => [f.dep?.icao, f.dest?.icao]).filter(Boolean))];
   if (m.type === 'local') {
-    out.push({ ok: legs.length >= 2 && legs.every(({ l }) => l.main.waypoints.length >= 3), text: 'Local navigation: 2 nav logs (one prepared + a reserve one), both planned' });
+    out.push({ ok: legs.length >= 2 && legs.every(({ l }) => legPlanned(l)), text: 'Local navigation: 2 nav logs (one prepared + a reserve one), both planned' });
     out.push({ ok: !!(m.sharedAlt && m.sharedAlt.waypoints.length > 1), text: 'Alternate planned for the local navigations (company alternate policy)' });
     out.push({ ok: true, text: 'M&B: 1 for the local navigation' });
   }
   if (m.type === 'xc') {
-    out.push({ ok: legs.length >= 4 && legs.every(({ l }) => l.main.waypoints.length >= 3), text: 'Cross-country: 2 nav logs (1 per flight) + 2 for the reserve airport = 4 nav logs, all planned' });
+    out.push({ ok: legs.length >= 4 && legs.every(({ l }) => legPlanned(l)), text: 'Cross-country: 2 nav logs (1 per flight) + 2 for the reserve airport = 4 nav logs, all planned' });
     out.push({ ok: legs.every(({ f }) => f.alt), text: 'Every navigation planned with its alternate (one FlyBy base among the alternates)' });
     out.push({ ok: true, text: 'M&B: 1 for each flight (included in the download)' });
   }
@@ -2157,7 +2182,7 @@ async function downloadBriefing() {
       addMissionCover(out, F, {
         title: `Mission briefing · ${names[m.type]}`,
         lines: [`${names[m.type]} · ${state.flight.callsign || ''} · ${fleetType(state.flight.type).name} ${state.flight.reg || ''}`, `${flightTime().toLocaleDateString('en-GB')} · student ${state.mb.studentCode || '—'}`],
-        legs: m.legs.map((l) => { const f = figs.get(l.id); const ok = f.fuelOk && f.mbOk !== false && !f.issues.length && l.main.waypoints.length >= 3;
+        legs: m.legs.map((l) => { const f = figs.get(l.id); const ok = f.fuelOk && f.mbOk !== false && !f.issues.length && legPlanned(l);
           return { label: l.label, ok, status: ok ? 'OK' : 'CHECK', detail: `${f.dep?.icao || '?'} -> ${f.dest?.icao || '?'}${f.alt ? ` (alt ${f.alt.icao})` : ''} · ${f.dist} NM · T/O ${zl(f.t)} · LDG ${zl(f.ldg)} · FOB ${f.fob.toFixed(1)} L · trip ${f.trip.toFixed(1)} L · minimum ${f.required} L${f.issues.length ? ' · ' + f.issues.join('; ') : ''}` }; }),
         checks: missionChecks(figs),
       });
