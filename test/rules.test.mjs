@@ -35,12 +35,13 @@ test('VFR flight plan draft', () => {
   assert.match(fpl, /-LEVT0045 LERJ/);
 });
 
-import { readFileSync } from 'node:fs';
 import { mergeAip, procedureFor, adByIcao } from '../js/data.js';
 import { aipNotes, NO_REFUEL } from '../js/rules.js';
 
 test('VAC procedures for LEPP, LESO, LEXJ, LEHC, LESA', () => {
-  mergeAip(JSON.parse(readFileSync(new URL('../data/aip.json', import.meta.url))));
+  // minimal AIP data (data/aip.json is built in CI): reporting points come from the VACs
+  const ad = (icao, lat, lon, elev) => ({ icao, name: icao, lat, lon, elev, var: 0, type: 'AD', class: 'PÚBLICO' });
+  mergeAip({ aerodromes: [ad('LEPP', 42.77, -1.646, 1506), ad('LESO', 43.357, -1.791, 15), ad('LEXJ', 43.427, -3.82, 16), ad('LEHC', 42.081, -0.323, 1769), ad('LESA', 40.952, -5.502, 2595)], vrps: [{ id: 'N', ad: 'LEUN', lat: 41.134167, lon: -5.693611, name: 'X' }] });
   assert.equal(adByIcao('LEPP').freq, 'LEPP:118.200');
   assert.deepEqual(procedureFor('LEPP', 'N', 'arr').points, ['N']);
   assert.equal(procedureFor('LEPP', 'E', 'arr').alt, 2500); // 1506 + 1000 AGL max
