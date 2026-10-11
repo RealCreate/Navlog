@@ -299,6 +299,7 @@ function setBase(b) {
   ({ vfr: vfrLayer, topo: topoLayer, chart: ownLayer })[b].addTo(map);
   // the ENAIRE chart already shows the airspaces; on the others they are drawn by the app
   if (b !== 'vfr') { aviationLayer.addTo(map); asLabelLayer.addTo(map); buildAsLabels(); }
+  if (placesLayer) placesLayer.setStyle(b === 'vfr' ? 'light' : 'rogers');
   document.querySelector(`input[name=base][value=${b}]`).checked = true;
 }
 
@@ -358,7 +359,14 @@ let placesData = [];
 fetch('data/places.json').then((r) => (r.ok ? r.json() : [])).then((places) => {
   if (!places.length) return;
   placesData = places;
-  placesLayer = new PlacesLayer(places);
+  // names keep clear of the airspace, navaid and reporting-point labels (already on the map)
+  placesLayer = new PlacesLayer(places, { avoid: () => {
+    const o = map.getContainer().getBoundingClientRect();
+    return [...map.getContainer().querySelectorAll('.as-box, .as-edge, .ama, .nav-box, .pt-label, .pt-ad')].map((el) => {
+      const r = el.getBoundingClientRect(); return { x: r.left - o.left, y: r.top - o.top, w: r.width, h: r.height };
+    }).filter((b) => b.w > 0);
+  } });
+  placesLayer.setStyle(state.view.base === 'vfr' ? 'light' : 'rogers');
   togglePlaces();
 }).catch(() => {});
 function togglePlaces() {
@@ -2810,7 +2818,7 @@ async function downloadBriefing() {
         } catch { chartsMissing = true; }
       }
       if (p.mapData) {
-        const img = await renderRouteMap(p.mapData.routes, { title: p.mapData.title, aviation: ownMeta && state.view.base !== 'vfr' ? { list: CHART_AS, labels: AS_LABELS, ama: AMA_CELLS, navaids: NAVAIDS, obstacles: OBSTACLES, varAt: defaultVar } : null });
+        const img = await renderRouteMap(p.mapData.routes, { title: p.mapData.title, aviation: ownMeta && state.view.base !== 'vfr' ? { list: CHART_AS, labels: AS_LABELS, ama: AMA_CELLS, navaids: NAVAIDS, obstacles: OBSTACLES, places: state.view.names ? placesData : [], varAt: defaultVar } : null });
         if (img) await addMapPage(out, img, pdfText(`Marked chart · ${p.mapData.title} · 2-min marks at planned GS · HAT = heading, altitude, time`));
       }
       if (p.sheets) await add(await buildNavlogPdf(p.sheets));

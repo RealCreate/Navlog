@@ -10,6 +10,7 @@ const worldPx = (lat, lon, z) => {
   return { x: ((lon + 180) / 360) * n, y: ((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2) * n };
 };
 
+import { drawPlaces } from './places.js';
 import { drawAirspaces, drawAmaGrid, drawLabels, drawNavaids, drawObstacles, navaidLabel } from './aviation.js';
 
 async function tile(z, x, y, dir = 'tiles') {
@@ -60,6 +61,10 @@ export async function renderRouteMap(routes, { width = 2400, height = 1650, titl
     drawAirspaces(g, aviation.list, PP, z, k);
     drawNavaids(g, aviation.navaids || [], PP, Math.max(z, 9), k, aviation.varAt || (() => 0));
     drawObstacles(g, aviation.obstacles || [], PP, Math.max(z, 11), k * 0.8);
+    // town names in the Rogers style (one zoom step denser than the tiles: the sheet is read up close)
+    if (aviation.places && aviation.places.length) {
+      drawPlaces(g, aviation.places, PP, Math.min(z + 1, 11), { k: 2.1 * s0, style: 'rogers', inView: (la, lo) => { const [x, y] = PP(la, lo); return x > -20 && y > -20 && x < width + 20 && y < height + 20; } });
+    }
     const vis = (l) => { const [x, y] = PP(l.lat, l.lon); return x > -50 && y > -50 && x < width + 50 && y < height + 50; };
     const navLabels = (aviation.navaids || []).filter((n) => !/ILS/i.test(n.type)).map((n) => ({ lat: n.lat - 0.06, lon: n.lon + 0.08, angle: 0, kind: 'box', color: '#1d3f8f', lines: navaidLabel(n).lines }));
     drawLabels(g, navLabels.concat(aviation.labels).filter((l) => vis(l) && (l.kind !== 'edge' || l.edgePx10 * 2 ** (z - 10) * 2 > l.text.length * 13)), PP, k * 0.9, aviation.ama.filter((c) => vis({ lat: (c.n + c.s) / 2, lon: (c.w + c.e) / 2 })));
