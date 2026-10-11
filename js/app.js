@@ -750,7 +750,8 @@ function renderRoute() {
   if (windChanges.length) html += `<div class="warnings" style="color:var(--tint);background:rgba(10,132,255,0.1)"><b>Winds updated — changes:</b><br>${windChanges.map(esc).join('<br>')}<br>Download the navlog again to reprint.</div>`;
   if (nl.warnings.length) html += `<div class="warnings">${nl.warnings.map(esc).join('<br>')}</div>`;
 
-  html += `<div class="group">
+  const optSummary = [r.stdDep && 'std dep', r.stdArr && 'std arr', state.flight.solo && 'solo', state.flight.lowCloud && 'low cloud'].filter(Boolean).join(' · ') || 'none';
+  html += `<details class="group options" ${state.view.optsOpen ? 'open' : ''}><summary><span>Flight options</span><span class="label">${optSummary}</span></summary>
     <div class="toggle-row"><span>Standard departure — ${SOP.stdDepMin} min <small class="label">(only when starting at an aerodrome)</small></span>
       <label class="switch"><input type="checkbox" data-flag="stdDep" ${r.stdDep ? 'checked' : ''}><span></span></label></div>
     <div class="toggle-row"><span>Standard arrival — ${SOP.stdArrMin} min <small class="label">(only when ending at an aerodrome)</small></span>
@@ -759,7 +760,7 @@ function renderRoute() {
       <label class="switch"><input type="checkbox" data-solo ${state.flight.solo ? 'checked' : ''}><span></span></label></div>
     <div class="toggle-row"><span>LEBG low-cloud procedure <small class="label">(cloud base below 5000 ft · dual only)</small></span>
       <label class="switch"><input type="checkbox" data-lowcloud ${state.flight.lowCloud ? 'checked' : ''} ${state.flight.solo ? 'disabled' : ''}><span></span></label></div>
-  </div>`;
+  </details>`;
   const soloIssue = soloEntryIssue();
   if (soloIssue) html = `<div class="warnings">${esc(soloIssue)}</div>` + html;
   const semi = seraIssues(key);
@@ -838,6 +839,7 @@ panels.route.addEventListener('change', (e) => {
   if (f === 'wdir' || f === 'wspd') w.windSrc = v === '' ? undefined : 'manual';
   update({ rerenderPanels: true });
 });
+panels.route.addEventListener('toggle', (e) => { if (e.target.matches('details.options')) { state.view.optsOpen = e.target.open; scheduleSave(); } }, true);
 panels.route.addEventListener('click', (e) => {
   if (e.target.closest('[data-act=toMission]')) return document.querySelector('#modes [data-mode=mission]').click();
   const b = e.target.closest('[data-act]'); if (!b) return;
