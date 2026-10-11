@@ -4,6 +4,7 @@
 // as the sheets ask ("locate this point on the C.G. envelope").
 
 import { embedPlan } from './plans.js';
+import { PA28_CHART } from './perf.js';
 
 // Row keys: empty, pilot, copilot, front (pilot + front passenger), pax, pax1, pax2, baggage,
 // baggage2, zfw, fuel, ramp, taxi, to, trip, ldg. Each row: [yCentre, halfHeight].
@@ -36,11 +37,12 @@ const FORMS = {
       armRows: ['empty'], clear: ['empty'],
     },
     chart: { page: 0, x: 'moment', y: 'mass', xs: [650, 66.96, 1100, 495.7], ys: [400, 534.6, 650, 278.6] },
+    loadGraph: { page: 0, x0: 546.9, kx: 1.361, y0: 250, ky: 2.138, items: ['pilot', 'copilot', 'fuel', 'baggage'] },
   },
   PS28: {
     file: 'assets/mb/PS28.pdf', size: 8.5, thousands: true,
-    // load sheet & balance chart (page 2, printed rotated): weight 400–600 kg across, C.G. 28–35 % MAC down
-    chart: { page: 1, x: 'mass', y: 'pct', xs: [400, 43.8, 600, 185.8], ys: [30, 295.8, 35, 538.8] },
+    // load sheet & balance chart (page 2, printed rotated) — traced step by step, see ps28Trace()
+    loadSheet: { page: 1 },
     header: { page: 0, reg: [322, 378, 462, 478], date: [322, 378, 503, 519], student: [322, 378, 523, 539] },
     table: {
       page: 0, w: [140, 200], a: [225, 282], m: [298, 380],
@@ -57,6 +59,8 @@ const FORMS = {
     },
     header: { page: 1, line: [432, 60, 400] },
     chart: { page: 2, x: 'moment', y: 'mass', xs: [45, 123.5, 110, 463.5], ys: [1500, 708, 2300, 495], div: 1000 },
+    // loading graph (fig. 6-6): moment/1000 lb·in across, load weight lb up
+    loadGraph: { page: 2, x0: 146.7, kx: 9.72 / 1000, y0: 329.3, ky: 0.4867, items: ['front', 'pax', 'fuel', 'baggage', 'baggage2'] },
   },
   C172RG: {
     file: 'assets/mb/C172RG.pdf', size: 7.5,
@@ -76,6 +80,8 @@ const FORMS = {
       armRows: ['empty', 'to'],
     },
     chart: { page: 0, x: 'arm', y: 'mass', xs: [82, 163.8, 96, 472.5], ys: [1200, 684, 2800, 360] },
+    loadGraph: { page: 0, x0: 397.5, kx: 3.576 / 1000, y0: 293.25, ky: 0.3528, items: ['front', 'pax', 'fuel', 'baggage'] },
+    perfCharts: { page: 1 },
   },
   P2006: {
     file: 'assets/mb/P2006.pdf', size: 8.5,
@@ -85,7 +91,7 @@ const FORMS = {
       rows: { empty: [373.7, 8], pilot: [414, 8], copilot: [432, 8], pax1: [449, 8], pax2: [468, 8], baggage: [492.5, 8], zfw: [532, 18], fuel: [578, 18], to: [641, 16], trip: [683, 22], ldg: [728, 18] },
       armRows: ['empty'],
     },
-    chart: { page: 1, x: 'mass', y: 'moment', xs: [790, 459.8, 1290, 146.4], ys: [175, 642.7, 325, 472.8] },
+    chart: { page: 1, x: 'mass', y: 'moment', xs: [790, 459.8, 1290, 146.4], ys: [175, 642.7, 325, 472.8], gx: 669.8, gy: 460.0 },
   },
   P2006NG: {
     file: 'assets/mb/P2006NG.pdf', size: 9,
@@ -95,7 +101,7 @@ const FORMS = {
       rows: { empty: [368, 10], pilot: [417, 10], copilot: [442, 10], pax1: [466, 10], pax2: [491, 10], baggage: [517, 10], zfw: [549, 18], fuel: [598, 22], to: [689, 22], trip: [738, 22], ldg: [792, 22] },
       armRows: ['empty'],
     },
-    chart: { page: 1, x: 'mass', y: 'moment', xs: [790, 489.6, 1290, 128.6], ys: [175, 685.4, 325, 472.8] },
+    chart: { page: 1, x: 'mass', y: 'moment', xs: [790, 489.6, 1290, 128.6], ys: [175, 685.4, 325, 472.8], gx: 719.8, gy: 489.5 },
   },
 };
 
@@ -206,12 +212,37 @@ export async function buildMbFormPdf(m, meta, plan) {
     c('moment', mom(m.to.moment));
   }
 
+  // loading graph: for each item, across from its load to the item's line, then down to its moment
+  if (form.loadGraph) {
+    const g = form.loadGraph, gp = pages[g.page], GH = topOf(gp), orange = rgb(0.93, 0.5, 0.1);
+    for (const id of g.items) {
+      const v = vals[id];
+      if (!v || !(v[0] > 0)) continue;
+      const x = g.x0 + g.kx * v[2], y = GH - (g.y0 - g.ky * v[0]);
+      gp.drawLine({ start: { x: g.x0, y }, end: { x, y }, thickness: 0.9, color: orange });
+      gp.drawLine({ start: { x, y }, end: { x, y: GH - g.y0 }, thickness: 0.9, color: orange });
+      gp.drawCircle({ x, y, size: 1.8, color: orange });
+    }
+  }
+
+  if (form.perfCharts && meta.perf) pa28PerfTrace(pages[form.perfCharts.page], meta.perf, { bold, rgb });
+
+  if (form.loadSheet) ps28Trace(pages[form.loadSheet.page], m, { font, bold, blue, red, rgb });
+
   // envelope chart: take-off (filled) and landing (ring) points
   if (form.chart) {
     const ch = form.chart, cp = pages[ch.page], CH = topOf(cp);
     const val = (axis, pt) => (axis === 'mass' ? pt.mass : axis === 'arm' ? pt.arm : axis === 'pct' ? m.pct(pt.arm) : pt.moment / (ch.div || 1));
     const at = (pt) => ({ x: lin(ch.xs, val(ch.x, pt)), y: CH - lin(ch.ys, val(ch.y, pt)) });
     const a = at(m.to), b = at(m.ldg);
+    // guide lines from both axes to each point, as in the SOP worked examples
+    const orange = rgb(0.93, 0.5, 0.1);
+    const gx = ch.gx != null ? CH - ch.gx : CH - lin(ch.ys, ch.ys[0]); // page y of the horizontal axis
+    const gy = ch.gy != null ? ch.gy : lin(ch.xs, ch.xs[0]); // page x of the vertical axis
+    for (const p of [a, b]) {
+      cp.drawLine({ start: { x: p.x, y: gx }, end: p, thickness: 0.9, color: orange });
+      cp.drawLine({ start: { x: gy, y: p.y }, end: p, thickness: 0.9, color: orange });
+    }
     cp.drawLine({ start: a, end: b, thickness: 1.2, color: blue });
     cp.drawCircle({ x: a.x, y: a.y, size: 3.2, color: m.to.cgOk && m.to.massOk ? blue : red });
     cp.drawCircle({ x: b.x, y: b.y, size: 3.2, borderColor: m.ldg.cgOk && m.ldg.massOk ? blue : red, borderWidth: 1.4 });
@@ -244,10 +275,93 @@ function addPerfPage(doc, font, bold, m, meta) {
     if (!ph || ph.manual) { text((r && (r.manual || ph?.manual)) || 'No table for this type — use the AFM/POH', 40, 10, font, rgb(0.84, 0, 0.08)); y += 30; continue; }
     const both = (v) => (r.unit === 'ft' ? `${v} ft  (${Math.round(v / ftm)} m)` : `${v} m  (${Math.round(v * ftm)} ft)`);
     text('Ground roll', 50, 11); text(both(ph.gr), 300, 11, bold, blue); y += 18;
-    text(isTo ? 'Distance over 50 ft obstacle' : 'Distance from 50 ft', 50, 11); text(both(ph.d50), 300, 11, bold, blue); y += 18;
+    if (ph.d50 != null) { text(isTo ? 'Distance over 50 ft obstacle' : 'Distance from 50 ft', 50, 11); text(both(ph.d50), 300, 11, bold, blue); y += 18; }
     if (ph.out) { text('Outside the table — nearest edge used, check the AFM', 50, 9, font, rgb(0.84, 0, 0.08)); y += 14; }
     text(`${r.source}${ph.steps && ph.steps.length ? ' · corrections: ' + ph.steps.join(', ') : ''}`, 50, 8, font, grey); y += 12;
     if (ph.note) { text(ph.note, 50, 8, font, grey); y += 12; }
     text('TORA / LDA (AD 2.13): ____________   Margin: ____________', 50, 9, font, ink); y += 30;
+  }
+}
+
+/**
+ * PS-28 "Load sheet & balance chart" (POH 6-14), page printed rotated 90°. Measured on the sheet:
+ *  - index axis (page y): y = 295.8 + 0.005246 · (moment − 450 · mass)   [kg, mm]; the 30 % MAC line
+ *    (450 mm) is the horizontal one, the other % MAC lines fan out from it.
+ *  - mass axis (page x): x = 43.8 + 0.71 · (mass − 400)   (400–600 kg)
+ *  - item strips (5 kg graduations): pilot 271.8–284.5, passenger 256.2–269.0, baggage 240.5–253.2,
+ *    wing lockers 225.0–237.8, fuel 209.2–222.0.
+ * Trace as in the POH example: empty index → one step per item → across to the take-off mass; the
+ * zero-fuel point is taken off before the fuel strip; landing is marked as a ring.
+ */
+function ps28Trace(page, m, { font, bold, blue, red, rgb }) {
+  const H = topOf(page);
+  const Y = (mass, moment) => H - (295.8 + 0.005246 * (moment - 450 * mass));
+  const X = (mass) => 43.8 + 0.71 * (mass - 400);
+  const orange = rgb(0.93, 0.5, 0.1);
+  const line = (a, b, t = 1) => page.drawLine({ start: a, end: b, thickness: t, color: orange });
+  const row = (id) => m.rows.find((r) => r.id === id) || { mass: 0, moment: 0 };
+  let mass = row('empty').mass, moment = row('empty').moment;
+  let y = Y(mass, moment);
+  line({ x: 300, y }, { x: 284.5, y }); // from the empty-weight scale
+  page.drawText('EMPTY', { x: 288, y: y + 3, size: 5.5, font: bold, color: orange });
+  const strips = [['pilot', 284.5, 271.8], ['copilot', 269.0, 256.2], ['baggage', 253.2, 240.5], ['baggage2', 237.8, 225.0], ['fuel', 222.0, 209.2]];
+  let prevX = 284.5, zf = null;
+  for (const [id, xr, xl] of strips) {
+    if (id === 'fuel') zf = { mass, moment, x: xr, y };
+    line({ x: prevX, y }, { x: xr, y });
+    const r = row(id);
+    mass += r.mass; moment += r.moment;
+    const y2 = Y(mass, moment);
+    line({ x: xr, y }, { x: xl, y: y2 }, 1.2);
+    y = y2; prevX = xl;
+  }
+  // take-off: across to the take-off mass
+  const to = { x: X(m.to.mass), y: Y(m.to.mass, m.to.moment) };
+  line({ x: prevX, y }, to, 1.2);
+  page.drawCircle({ x: to.x, y: to.y, size: 3.2, color: m.to.cgOk && m.to.massOk ? blue : red });
+  page.drawText('T/O', { x: to.x - 18, y: to.y + 3, size: 7, font: bold, color: blue });
+  // zero fuel: from before the fuel strip across to the zero-fuel mass
+  if (zf) {
+    const p = { x: X(zf.mass), y: Y(zf.mass, zf.moment) };
+    page.drawLine({ start: { x: zf.x, y: zf.y }, end: p, thickness: 0.8, color: orange, dashArray: [3, 2] });
+    page.drawCircle({ x: p.x, y: p.y, size: 2.6, borderColor: orange, borderWidth: 1.2 });
+    page.drawText('ZFW', { x: p.x - 18, y: p.y - 9, size: 6.5, font: bold, color: orange });
+  }
+  const l = { x: X(m.ldg.mass), y: Y(m.ldg.mass, m.ldg.moment) };
+  page.drawLine({ start: to, end: l, thickness: 1, color: blue });
+  page.drawCircle({ x: l.x, y: l.y, size: 3.2, borderColor: m.ldg.cgOk && m.ldg.massOk ? blue : red, borderWidth: 1.4 });
+  page.drawText('LDG', { x: l.x - 20, y: l.y - 10, size: 7, font: bold, color: blue });
+  void font;
+}
+
+/** PA-28 take-off / landing ground-roll charts traced as in the SOP example (orange). */
+function pa28PerfTrace(page, perf, { bold, rgb }) {
+  const H = topOf(page), orange = rgb(0.93, 0.5, 0.1);
+  const L = (a, b, dash) => page.drawLine({ start: { x: a[0], y: H - a[1] }, end: { x: b[0], y: H - b[1] }, thickness: 1.1, color: orange, dashArray: dash ? [3, 2] : undefined });
+  for (const { c, r } of perf) {
+    const ph = r && !r.manual ? (c.role === 'dep' ? r.to : r.ldg) : null;
+    if (!ph || !ph.chart) continue;
+    const C = PA28_CHART[c.role === 'dep' ? 'to' : 'ldg'], k = ph.chart;
+    // 1. OAT up to the pressure-altitude line, across to the weight reference line
+    L([k.x, C.axisY], [k.x, k.yRef]);
+    L([k.x, k.yRef], [C.refX, k.yRef]);
+    // 2. along the weight guide lines to the weight, then across to the wind reference line
+    const xW = (w) => C.refX + ((2550 - w) / 500) * (C.w2050X - C.refX);
+    let prev = [C.refX, k.yRef];
+    for (let i = 1; i <= 12; i++) {
+      const w = 2550 - ((2550 - k.w) * i) / 12;
+      const p = [xW(w), C.grY(k.grRef * (w / 2550) ** C.wExp)];
+      L(prev, p); prev = p;
+    }
+    L([prev[0], C.axisY], prev, true); // weight from the axis
+    L(prev, [C.wind0X, prev[1]]);
+    // 3. along the wind guide lines to the headwind, then across to the ground-roll scale
+    const xK = (kt) => C.wind0X + (kt / 15) * (C.wind15X - C.wind0X);
+    const end = [xK(k.hw), C.grY(k.gr)];
+    L([C.wind0X, prev[1]], end);
+    if (k.hw) L([end[0], C.axisY], end, true);
+    L(end, [C.wind15X, end[1]]);
+    page.drawCircle({ x: C.wind15X, y: H - end[1], size: 2.4, color: orange });
+    page.drawText(`${Math.round(k.gr)} ft`, { x: C.wind15X - 40, y: H - end[1] + 4, size: 7.5, font: bold, color: orange });
   }
 }

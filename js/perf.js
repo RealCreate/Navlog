@@ -182,7 +182,7 @@ export const PERF = {
       [740, 1515, 765, 1555, 795, 1595, 820, 1635, 850, 1680], [770, 1560, 795, 1600, 825, 1645, 850, 1685, 880, 1725],
       [800, 1605, 825, 1645, 855, 1690, 885, 1735, 915, 1780]]), base: 'paved', corr: { hwPctAll: [-0.10, 9], twPctAll: [0.10, 2, 10], grassOfGr: 0.40 }, note: 'Short field, flaps 30°, 2650 lb, 63 KIAS' },
   },
-  PA28: { manual: 'PA-28-181: the take-off and landing ground rolls are graphical charts on the sheet — read them with the values below' },
+  PA28: { chart: true, unit: 'ft', source: 'PA-28-181 sheet (POH charts: flaps up take-off ground roll, landing ground roll)' },
   PS28: { manual: 'PS-28: the SOP has no take-off/landing tables — use the POH section 5' },
 };
 
@@ -247,6 +247,10 @@ export function performance(typeId, cond) {
   const p = PERF[typeId];
   if (!p) return null;
   if (p.manual) return { manual: p.manual };
+  if (p.chart) {
+    const t = pa28Chart('to', cond), l = pa28Chart('ldg', cond);
+    return { unit: 'ft', source: p.source, to: { ...t, note: 'Ground roll only (the chart gives no 50 ft distance)' }, ldg: { ...l, note: 'Ground roll only (the chart gives no 50 ft distance)' } };
+  }
   let to;
   if (p.toByWeight) {
     // Cessna: tables by weight; interpolate between the bracketing weights (above the top → top table, flagged)
@@ -263,4 +267,42 @@ export function performance(typeId, cond) {
   }
   const ldg = p.ldg ? { ...phaseDistance({ ...p.ldg, unit: p.unit }, cond), note: p.ldg.note } : { manual: p.ldgNote };
   return { unit: p.unit, source: p.source, to, ldg };
+}
+
+/*
+ * PA-28-181 graphical charts (sheet page 2), measured on the printed charts (page points, y down):
+ *  OAT °C → page x = 39.4 + 2.0725·(OAT + 40) (both charts).
+ *  Take-off: pressure-altitude lines x + y = 437.5 − 0.0225·PA; ground-roll axis y = 351.25 − 0.11719·(GR − 400);
+ *    weight guide lines follow GR ∝ W^2.34 (2550 lb at x 225 → 2050 lb at x 454.5);
+ *    headwind lines GR·(1 − 0.0155·kt), 0–15 kt over x 454.5–526.25.
+ *  Landing: pressure-altitude lines y = 646.25 − 0.491·(x − 201.25) − 6.9·PA/1000;
+ *    ground-roll axis y = 768.75 − 0.23563·(GR − 500); weight lines GR ∝ W^0.99 (x 225 → 459.4);
+ *    headwind lines GR·(1 − 0.0207·kt), 0–15 kt over x 459.4–530.
+ * Checked against the printed guide lines (all within about 1–2 % of the chart). Tailwind is not modelled.
+ */
+export const PA28_CHART = {
+  oatX: (c) => 39.4 + 2.0725 * (c + 40),
+  to: {
+    refY: (pa, x) => 437.5 - 0.0225 * pa - x, grY: (gr) => 351.25 - 0.11719 * (gr - 400), yGr: (y) => 400 + (351.25 - y) / 0.11719,
+    wExp: 2.34, refX: 225, w2050X: 454.5, windK: 0.0155, wind0X: 454.5, wind15X: 526.25, axisY: 352.5, lineEndX: null,
+  },
+  ldg: {
+    refY: (pa, x) => 646.25 - 0.491 * (Math.min(x, 201.25) - 201.25) - 0.0069 * pa, grY: (gr) => 768.75 - 0.23563 * (gr - 500), yGr: (y) => 500 + (768.75 - y) / 0.23563,
+    wExp: 0.99, refX: 225, w2050X: 459.4, windK: 0.0207, wind0X: 459.4, wind15X: 530, axisY: 769.5, lineEndX: 201.25,
+  },
+};
+export function pa28Chart(kind, cond) {
+  const C = PA28_CHART[kind];
+  const x = PA28_CHART.oatX(cond.oat);
+  const yRef = C.refY(Math.max(0, cond.pa), x);
+  const grRef = C.yGr(yRef);
+  const w = Math.min(2550, Math.max(2050, cond.weight || 2550));
+  const grW = grRef * (w / 2550) ** C.wExp;
+  const hw = Math.max(0, Math.min(15, cond.wind || 0));
+  const gr = grW * (1 - C.windK * hw);
+  const steps = [];
+  if (hw) steps.push(`headwind ${hw} kt`);
+  if ((cond.wind || 0) < 0) steps.push('tailwind not applied — read the TAILWIND lines on the chart');
+  if (cond.surface === 'grass') steps.push('chart is for a paved, dry runway — add the POH grass correction');
+  return { gr: Math.round(gr), d50: null, out: (cond.weight || 0) > 2550 || cond.pa > 7000, steps, chart: { x, yRef, grRef, w, grW, hw, gr } };
 }

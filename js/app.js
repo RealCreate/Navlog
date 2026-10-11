@@ -1083,7 +1083,7 @@ function perfHtml() {
     const ph = c.role === 'dep' ? r.to : r.ldg;
     if (ph.manual) { html += `<div class="row check-bad"><span class="grow label">${esc(ph.manual)}</span></div></div>`; continue; }
     html += `<div class="row"><span class="grow">${c.role === 'dep' ? 'Take-off ground roll' : 'Landing ground roll'}</span><span class="value">${dist(ph.gr, r.unit)}</span></div>
-      <div class="row"><span class="grow"><b>${c.role === 'dep' ? 'Take-off distance over 50 ft' : 'Landing distance from 50 ft'}</b></span><span class="value"><b>${dist(ph.d50, r.unit)}</b></span></div>
+      ${ph.d50 != null ? `<div class="row"><span class="grow"><b>${c.role === 'dep' ? 'Take-off distance over 50 ft' : 'Landing distance from 50 ft'}</b></span><span class="value"><b>${dist(ph.d50, r.unit)}</b></span></div>` : ''}
       ${ph.out ? '<div class="row check-bad"><span class="grow label">Outside the table — the nearest edge was used. Check the AFM.</span></div>' : ''}
       <div class="row"><span class="grow label">${esc(r.source)}${ph.steps && ph.steps.length ? ` · corrections: ${esc(ph.steps.join(', '))}` : ''}${ph.note ? ` · ${esc(ph.note)}` : ''}. Compare with TORA/LDA (AD 2.13).</span></div></div>`;
   }
@@ -1433,7 +1433,7 @@ function renderBriefing() {
   const mbr = B.mb;
   html += `<div class="group-title"><span>5 · Mass &amp; balance · 6 · Performance</span><button class="btn small" data-act="toMb">Open</button></div><div class="group">
     <div class="row ${mbr ? (mbr.ok ? 'check-ok' : 'check-bad') : 'check-bad'}"><span class="grow">${mbr ? `T/O ${mbr.to.mass.toFixed(1)} ${mbr.ac.unit} · C.G. ${mbr.to.arm.toFixed(mbr.ac.armDp)} ${mbr.ac.armUnit}` : 'Mass &amp; balance not complete'}</span><span class="value">${mbr ? (mbr.ok ? 'IN LIMITS' : 'OUT') : '—'}</span></div>
-    ${B.perf.map(({ c, r }) => { const ph = r && !r.manual ? (c.role === 'dep' ? r.to : r.ldg) : null; return `<div class="row"><span class="grow">${c.role === 'dep' ? 'Take-off' : 'Landing'} ${c.ad.icao}</span><span class="value">${ph && !ph.manual ? `${ph.d50} ${r.unit} over 50 ft` : 'read the chart'}</span></div>`; }).join('')}
+    ${B.perf.map(({ c, r }) => { const ph = r && !r.manual ? (c.role === 'dep' ? r.to : r.ldg) : null; return `<div class="row"><span class="grow">${c.role === 'dep' ? 'Take-off' : 'Landing'} ${c.ad.icao}</span><span class="value">${ph && !ph.manual ? (ph.d50 != null ? `${ph.d50} ${r.unit} over 50 ft` : `ground roll ${ph.gr} ${r.unit}`) : 'read the chart'}</span></div>`; }).join('')}
   </div>`;
 
   // 7. TEM

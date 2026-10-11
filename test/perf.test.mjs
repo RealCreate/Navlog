@@ -64,3 +64,14 @@ test('P-Mentor landing: grass +20 % ground roll, 6 kt headwind −10 % / −6 %'
   assert.equal(r.gr, Math.round(178 * 0.9 * 1.2));
   assert.equal(r.d50, Math.round(440 * 0.94));
 });
+
+test('PA-28 charts: ground roll read like the printed chart', () => {
+  // weight reference line at 2550 lb, no wind: S.L., ~15 °C reads about 1000 ft on the take-off chart
+  const r = performance('PA28', { pa: 0, oat: 15, wind: 0, surface: 'paved', weight: 2550 });
+  assert.ok(r.to.gr > 850 && r.to.gr < 1150, `take-off ${r.to.gr}`);
+  assert.ok(r.ldg.gr > 850 && r.ldg.gr < 1000, `landing ${r.ldg.gr}`);
+  const light = performance('PA28', { pa: 0, oat: 15, wind: 0, surface: 'paved', weight: 2050 });
+  assert.ok(light.to.gr < r.to.gr * 0.65 && light.to.gr > r.to.gr * 0.55);
+  const hw = performance('PA28', { pa: 0, oat: 15, wind: 10, surface: 'paved', weight: 2550 });
+  assert.ok(hw.to.gr < r.to.gr);
+});

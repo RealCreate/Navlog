@@ -1,6 +1,6 @@
 // Offline support: app shell is precached; chart tiles are cached as they are viewed
 // (or saved in bulk with "Save chart for offline").
-const VERSION = 'navlog-shell-v10';
+const VERSION = 'navlog-shell-v11';
 const TERRAIN = 'navlog-terrain-v1';
 const TILES = 'navlog-tiles-v1';
 const SHELL = [

@@ -126,7 +126,7 @@ export function addBriefingPages(doc, F, B, meta) {
   if (B.fuel) { const p = B.fuel; W.row(`Fuel: trip ${p.trip.toFixed(1)} · alternate ${p.alternate.toFixed(1)} · minimum ${p.required} L · on board ${p.fob} L`, p.fob >= p.required ? 'OK' : 'SHORT', p.fob >= p.required ? W.green : W.red); }
   for (const { c, r } of B.perf) {
     const ph = !r || r.manual ? null : c.role === 'dep' ? r.to : r.ldg;
-    const txt = ph && !ph.manual ? `ground roll ${ph.gr} ${r.unit} · 50 ft ${ph.d50} ${r.unit}` : 'read the AFM chart';
+    const txt = ph && !ph.manual ? `ground roll ${ph.gr} ${r.unit}${ph.d50 != null ? ` · 50 ft ${ph.d50} ${r.unit}` : ''}` : 'read the AFM chart';
     W.row(`${c.role === 'dep' ? 'T/O' : 'LDG'} ${c.ad.icao} (PA ${c.pa} ft, ${c.oat} °C, wind ${c.wind} kt): ${txt}`);
   }
 
