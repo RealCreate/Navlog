@@ -1,11 +1,12 @@
 // Offline support: app shell is precached; chart tiles are cached as they are viewed
 // (or saved in bulk with "Save chart for offline").
-const VERSION = 'navlog-shell-v26';
+const VERSION = 'navlog-shell-v27';
 const TERRAIN = 'navlog-terrain-v1';
 const TILES = 'navlog-tiles-v1';
+const OWNCHART = 'navlog-ownchart-v1';
 const SHELL = [
   './', 'index.html', 'styles.css', 'manifest.webmanifest',
-  'js/app.js', 'js/data.js', 'js/nav.js', 'js/pdf.js', 'js/sun.js', 'js/profile.js', 'js/places.js', 'js/winds.js', 'js/weather.js', 'js/rules.js', 'js/plans.js', 'js/time.js', 'js/mb.js', 'js/mbpdf.js', 'js/perf.js', 'js/briefpdf.js', 'js/mapprint.js', 'js/notam.js', 'vendor/pdfjs/pdf.min.mjs', 'vendor/pdfjs/pdf.worker.min.mjs', 'data/aip.json',
+  'js/app.js', 'js/data.js', 'js/nav.js', 'js/pdf.js', 'js/sun.js', 'js/profile.js', 'js/places.js', 'js/winds.js', 'js/weather.js', 'js/rules.js', 'js/plans.js', 'js/time.js', 'js/mb.js', 'js/mbpdf.js', 'js/perf.js', 'js/briefpdf.js', 'js/mapprint.js', 'js/notam.js', 'js/aviation.js', 'vendor/pdfjs/pdf.min.mjs', 'vendor/pdfjs/pdf.worker.min.mjs', 'data/aip.json',
   'data/places.json', 'assets/mb/P2008.pdf', // other types' sheets are cached the first time they are used
   'vendor/leaflet/leaflet.js', 'vendor/leaflet/leaflet.css', 'vendor/pdf-lib/pdf-lib.min.js',
   'assets/navlog-template.pdf', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png',
@@ -18,7 +19,7 @@ self.addEventListener('install', (e) => {
 self.addEventListener('activate', (e) => {
   e.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => ![VERSION, TILES, TERRAIN].includes(k)).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => ![VERSION, TILES, TERRAIN, OWNCHART].includes(k)).map((k) => caches.delete(k))))
       .then(() => self.clients.claim()),
   );
 });
@@ -26,9 +27,9 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET') return;
-  if (url.origin === location.origin && url.pathname.includes('/tiles/') && !url.pathname.endsWith('meta.json')) {
-    // Chart tiles: cache first
-    e.respondWith(caches.open(TILES).then(async (c) => {
+  if (url.origin === location.origin && (url.pathname.includes('/tiles/') || url.pathname.includes('/chart/')) && !url.pathname.endsWith('meta.json')) {
+    // Chart tiles (ENAIRE and the app's own chart): cache first
+    e.respondWith(caches.open(url.pathname.includes('/chart/') ? OWNCHART : TILES).then(async (c) => {
       const hit = await c.match(e.request, { ignoreSearch: true });
       if (hit) return hit;
       const res = await fetch(e.request);

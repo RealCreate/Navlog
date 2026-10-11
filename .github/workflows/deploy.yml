@@ -20,7 +20,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
 
@@ -75,6 +75,26 @@ jobs:
           path: chart-previews/
           if-no-files-found: ignore
 
+      - name: Month key for the own chart
+        id: cmonth
+        run: echo "m=$(date +%Y-%m)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore own chart
+        id: ownchart
+        uses: actions/cache@v4
+        with:
+          path: chart
+          key: chart-${{ steps.cmonth.outputs.m }}-${{ hashFiles('tools/build-chart.py', 'tools/build-chart.sh', 'tools/clip-area.py') }}
+          restore-keys: chart-
+
+      - name: Build own chart (terrain + OpenStreetMap)
+        if: steps.ownchart.outputs.cache-hit != 'true'
+        continue-on-error: true
+        timeout-minutes: 120
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq gdal-bin python3-gdal python3-numpy python3-pil osmium-tool
+          bash tools/build-chart.sh
+
       - name: Month key for place names
         id: month
         run: echo "m=$(date +%Y-%m)" >> "$GITHUB_OUTPUT"
@@ -114,6 +134,7 @@ jobs:
           if [ -f data/places.json ]; then cp data/places.json _site/data/; else echo '[]' > _site/data/places.json; fi
           if [ -f aipdata/aip.json ]; then cp aipdata/aip.json _site/data/; else echo '{}' > _site/data/aip.json; fi
           cp -r tiles _site/tiles
+          if [ -d chart ]; then cp -r chart _site/chart; fi
           touch _site/.nojekyll
           du -sh _site
 

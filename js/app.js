@@ -9,6 +9,7 @@ import { PlacesLayer } from './places.js';
 import { fetchWinds } from './winds.js';
 import { fetchWeather, assess, metarSummary, crosswind } from './weather.js';
 import { performance, pressureAlt, isaTemp, FT_PER_M } from './perf.js';
+import { chartAirspaces, drawAirspaces, drawAmaGrid, airspaceLabels, worldPx as wpx } from './aviation.js';
 import { MB_TYPES, computeMb, fmtMoment, cgLimitsAt, KG_TO_LB } from './mb.js';
 import { zl, utc, local } from './time.js';
 import { APPROVED, IFR_ONLY, EASY_FIRST, FULL_STOP, CLOSING_LOCAL, NO_REFUEL, FREQS, AIP_NOTES, aipNotes, aerodromeOpen, airspaceCrossings, crossingIssue, buildFpl, departureBriefing, arrivalBriefing, temThreats } from './rules.js';
@@ -31,7 +32,7 @@ const defaultState = () => ({
   active: 'main',
   time: null,
   flight: { callsign: '', type: 'P2008', reg: 'EC-ODX', pilot: '', copilot: '', baggage: 0, baggage2: 0, pax: '', pax1: '', pax2: '', emptyMass: '', emptyMoment: '', fob: 120, taxi: '', extra: 0, weather: '', solo: false, pob: 2, lowCloud: false },
-  view: { base: 'vfr', points: true, marks: true, names: true, profile: true, winds: true, panel: true },
+  view: { base: 'chart', chartV: 1, points: true, marks: true, names: true, profile: true, winds: true, panel: true },
   unlocked: ['LEBG', 'LERJ'],
   tem: {},
   windSource: null,
@@ -53,7 +54,7 @@ function adWaypoint(ad) {
 function load() {
   try {
     const s = JSON.parse(localStorage.getItem(STORE));
-    if (s && s.main) { const d = defaultState(); return { ...d, ...s, flight: { ...d.flight, ...s.flight }, view: { ...d.view, ...s.view }, mb: { ...d.mb, ...s.mb }, settings: { ...d.settings, ...s.settings }, unlocked: s.unlocked || d.unlocked, tem: s.tem || {} }; }
+    if (s && s.main) { const d = defaultState(); return { ...d, ...s, flight: { ...d.flight, ...s.flight }, view: { ...d.view, ...s.view, ...(s.view && s.view.chartV ? {} : { base: 'chart', chartV: 1 }) }, mb: { ...d.mb, ...s.mb }, settings: { ...d.settings, ...s.settings }, unlocked: s.unlocked || d.unlocked, tem: s.tem || {} }; }
   } catch { /* first run or storage blocked */ }
   return defaultState();
 }
@@ -176,7 +177,76 @@ const topoLayer = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png'
 });
 let chartMeta = null;
 
+// The app's own chart (Rogers-style): terrain + ground tiles built in CI, aviation drawn on top.
+const ownLayer = L.tileLayer('chart/{z}/{x}/{y}.webp', {
+  minZoom: 6, maxZoom: 14, keepBuffer: 4,
+  maxNativeZoom: retina ? 11 : 12, minNativeZoom: retina ? 5 : 6,
+  tileSize: retina ? 128 : 256, zoomOffset: retina ? 1 : 0,
+  attribution: 'Terrain SRTM · map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> · airspace ENAIRE AIP',
+});
+let ownMeta = null;
+let CHART_AS = [], AMA_CELLS = [], AS_LABELS = [];
+// Airspaces as canvas tiles (sharp at every zoom, drawn from the AIP data)
+const AviationLayer = L.GridLayer.extend({
+  createTile(coords) {
+    const c = document.createElement('canvas');
+    const dpr = Math.min(2, window.devicePixelRatio || 1), sz = this.getTileSize();
+    c.width = sz.x * dpr; c.height = sz.y * dpr;
+    const g = c.getContext('2d'); g.scale(dpr, dpr);
+    const z = coords.z, ox = coords.x * sz.x, oy = coords.y * sz.y;
+    const P = (la, lo) => { const [x, y] = wpx(la, lo, z); return [x - ox, y - oy]; };
+    const pad = 0.15 * 2 ** (10 - z);
+    const nw = map.unproject([ox, oy], z), se = map.unproject([ox + sz.x, oy + sz.y], z);
+    const view = { n: nw.lat + pad, s: se.lat - pad, w: nw.lng - pad, e: se.lng + pad };
+    if (z >= 7) drawAmaGrid(g, AMA_CELLS.filter((a) => !(a.e < view.w || a.w > view.e || a.n < view.s || a.s > view.n)), P);
+    drawAirspaces(g, CHART_AS, P, z, 1, view);
+    return c;
+  },
+});
+const aviationLayer = new AviationLayer({ pane: 'labels', zIndex: 5, updateWhenZooming: false, keepBuffer: 2 });
+map.createPane('aviation').style.zIndex = 405;
+aviationLayer.options.pane = 'aviation';
+const asLabelLayer = L.layerGroup();
+function buildAsLabels() {
+  asLabelLayer.clearLayers();
+  const z = map.getZoom();
+  if (z >= 7) for (const c of AMA_CELLS) {
+    asLabelLayer.addLayer(L.marker([c.n - (c.n - c.s) * 0.22, c.w + (c.e - c.w) * 0.72], { pane: 'aviation', interactive: false, keyboard: false,
+      icon: L.divIcon({ className: '', iconSize: [0, 0], html: `<span class="ama">${Math.floor(c.v / 10)}<small>${c.v % 10}</small></span>` }) }));
+  }
+  for (const l of AS_LABELS) {
+    if (l.kind === 'edge') {
+      if (z < (l.minZoom || 8)) continue;
+      if (l.edgePx10 * 2 ** (z - 10) < l.text.length * 6.2 + 20) continue; // edge too short at this zoom
+      asLabelLayer.addLayer(L.marker([l.lat, l.lon], { pane: 'aviation', interactive: false, keyboard: false,
+        icon: L.divIcon({ className: '', iconSize: [0, 0], html: `<span class="as-edge" style="--a:${l.angle.toFixed(1)}deg;color:${l.color}">${esc(l.text)}</span>` }) }));
+    } else if (z >= (l.minZoom || 9)) {
+      asLabelLayer.addLayer(L.marker([l.lat, l.lon], { pane: 'aviation', interactive: false, keyboard: false,
+        icon: L.divIcon({ className: '', iconSize: [0, 0], html: `<span class="as-box" style="color:${l.color}">${l.lines.map(esc).join('<br>')}</span>` }) }));
+    }
+  }
+}
+map.on('zoomend', () => { if (map.hasLayer(asLabelLayer)) buildAsLabels(); });
+function setAviationData(aip) {
+  CHART_AS = chartAirspaces(aip.airspaces || []);
+  AMA_CELLS = aip.ama || [];
+  AS_LABELS = airspaceLabels(CHART_AS, (aip.aerodromes || []).map((a) => [a.lat, a.lon]));
+  aviationLayer.redraw(); buildAsLabels();
+}
+
 async function initBase() {
+  try {
+    const r = await fetch('chart/meta.json', { cache: 'no-cache' });
+    if (r.ok) {
+      ownMeta = await r.json();
+      if (ownMeta.bounds) ownLayer.options.bounds = L.latLngBounds(ownMeta.bounds);
+      let seen = null; try { seen = localStorage.getItem('navlog.chartBuild'); } catch { /* private mode */ }
+      if (seen !== ownMeta.built && 'caches' in window) {
+        await caches.delete('navlog-ownchart-v1').catch(() => {});
+        try { localStorage.setItem('navlog.chartBuild', ownMeta.built); } catch { /* ignore */ }
+      }
+    }
+  } catch { ownMeta = null; }
   try {
     const r = await fetch('tiles/meta.json', { cache: 'no-cache' });
     if (!r.ok) throw new Error();
@@ -199,9 +269,12 @@ async function initBase() {
   setBase(state.view.base);
 }
 function setBase(b) {
-  const useVfr = b === 'vfr' && chartMeta;
-  map.removeLayer(vfrLayer); map.removeLayer(topoLayer);
-  (useVfr ? vfrLayer : topoLayer).addTo(map);
+  if (b === 'chart' && !ownMeta) b = chartMeta ? 'vfr' : 'topo';
+  if (b === 'vfr' && !chartMeta) b = ownMeta ? 'chart' : 'topo';
+  [vfrLayer, topoLayer, ownLayer, aviationLayer, asLabelLayer].forEach((l) => map.removeLayer(l));
+  ({ vfr: vfrLayer, topo: topoLayer, chart: ownLayer })[b].addTo(map);
+  // the ENAIRE chart already shows the airspaces; on the others they are drawn by the app
+  if (b !== 'vfr') { aviationLayer.addTo(map); asLabelLayer.addTo(map); buildAsLabels(); }
   document.querySelector(`input[name=base][value=${b}]`).checked = true;
 }
 
@@ -243,7 +316,7 @@ map.on('zoomend', () => { const z = map.getZoom(); if ((z >= 9) !== (lastZ >= 9)
 // Every aerodrome, VRP and VFR route within 200 NM of LEBG / LERJ (AIP, built weekly in CI)
 let AIRSPACES = [];
 fetch('data/aip.json').then((r) => (r.ok ? r.json() : null)).then((aip) => {
-  if (aip && aip.airspaces) AIRSPACES = aip.airspaces;
+  if (aip && aip.airspaces) { AIRSPACES = aip.airspaces; setAviationData(aip); }
   if (mergeAip(aip)) { buildPoints(); update({ rerenderPanels: true }); }
 }).catch(() => {});
 
@@ -2637,7 +2710,7 @@ async function downloadBriefing() {
         } catch { chartsMissing = true; }
       }
       if (p.mapData) {
-        const img = await renderRouteMap(p.mapData.routes, { title: p.mapData.title });
+        const img = await renderRouteMap(p.mapData.routes, { title: p.mapData.title, aviation: ownMeta && state.view.base !== 'vfr' ? { list: CHART_AS, labels: AS_LABELS, ama: AMA_CELLS } : null });
         if (img) await addMapPage(out, img, pdfText(`Marked chart · ${p.mapData.title} · 2-min marks at planned GS · HAT = heading, altitude, time`));
       }
       if (p.sheets) await add(await buildNavlogPdf(p.sheets));

@@ -172,6 +172,12 @@ def parse_level(txt):
     return None, False
 
 
+def airspace_class(a):
+    """ICAO class letter as printed on the chart, from the label ('<FNT …> D </FNT> 700ft AGL-…')."""
+    m = re.search(r">\s*([A-G])\s*<", a.get("CLASS_NIVEL_LIST_LABEL") or "")
+    return m.group(1) if m else None
+
+
 airspaces = []
 for f in query(41, extra={"maxAllowableOffset": 0.002, "geometryPrecision": 4}):
     a, g = f["attributes"], f.get("geometry") or {}
@@ -187,14 +193,31 @@ for f in query(41, extra={"maxAllowableOffset": 0.002, "geometryPrecision": 4}):
     hi_ft, hi_agl = parse_level(upper_txt)
     airspaces.append({
         "type": t, "id": (a.get("IDENT_TXT") or "").strip(), "name": (a.get("NAME_TXT") or "").strip(),
-        "class": a.get("CLASS"), "lower": lower_txt, "upper": upper_txt,
+        "class": a.get("CLASS"), "cls": airspace_class(a), "lower": lower_txt, "upper": upper_txt,
         "lowerFt": lo_ft, "upperFt": hi_ft, "agl": bool(lo_agl), "upperAgl": bool(hi_agl),
         "freq": a.get("FREQTRANS_VAL"), "hours": a.get("WORKHR_CODE"), "rmk": (a.get("REMARKS_TXT") or None),
         "rings": rings,
     })
 print(f"{len(airspaces)} airspaces", file=sys.stderr)
 
-json.dump({"source": BASE, "built": time.strftime("%Y-%m-%d"), "aerodromes": ads, "vrps": vrps, "routes": routes, "airspaces": airspaces},
+# Area minimum altitudes (AMA): 30' cells, VALOR in hundreds of ft (as the big figures on the chart).
+ama = []
+try:
+    for f in query(1, extra={"geometryPrecision": 4}):
+        a, g = f["attributes"], f.get("geometry") or {}
+        if not g.get("rings"):
+            continue
+        ring = g["rings"][0]
+        lats = [p[1] for p in ring]; lons = [p[0] for p in ring]
+        c = ((min(lats) + max(lats)) / 2, (min(lons) + max(lons)) / 2)
+        if not any(nm(c, cc) <= RANGE_NM + 25 for cc in CENTRES.values()):
+            continue
+        ama.append({"s": round(min(lats), 4), "w": round(min(lons), 4), "n": round(max(lats), 4), "e": round(max(lons), 4), "v": int(a.get("VALOR") or 0)})
+except SystemExit as e:
+    print(f"AMA layer unavailable: {e}", file=sys.stderr)
+print(f"{len(ama)} AMA cells", file=sys.stderr)
+
+json.dump({"source": BASE, "built": time.strftime("%Y-%m-%d"), "aerodromes": ads, "vrps": vrps, "routes": routes, "airspaces": airspaces, "ama": ama},
           open(OUT, "w", encoding="utf-8"), ensure_ascii=False, separators=(",", ":"))
 print(f"wrote {OUT}")
 if len(ads) < 5:

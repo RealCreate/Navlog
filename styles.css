@@ -479,3 +479,9 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
 .hat.alt { border-color: var(--alt) !important; }
 .hat.alt .hn { background: var(--alt); }
 #msForm .field.narrow { flex: 0 0 112px; }
+
+/* Own chart: airspace labels and grid minimum altitudes (Rogers style) */
+.as-edge { position: absolute; transform: translate(-50%, -50%) rotate(var(--a)); white-space: nowrap; font: 800 10.5px/1 var(--font); letter-spacing: 0.02em; text-shadow: 0 0 2px #fff, 0 0 2px #fff, 0 0 3px #fff; pointer-events: none; }
+.as-box { position: absolute; transform: translate(-50%, -50%); text-align: center; white-space: nowrap; font: 800 11px/1.25 var(--font); color: #cc2a2a; text-shadow: 0 0 2px #fff, 0 0 2px #fff, 0 0 3px #fff; pointer-events: none; }
+.ama { position: absolute; transform: translate(-50%, -50%); font: 900 34px/1 var(--font); color: rgba(205, 35, 35, 0.55); text-shadow: 0 0 2px rgba(255,255,255,0.6); pointer-events: none; }
+.ama small { font-size: 20px; }

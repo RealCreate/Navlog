@@ -10,9 +10,11 @@ const worldPx = (lat, lon, z) => {
   return { x: ((lon + 180) / 360) * n, y: ((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2) * n };
 };
 
-async function tile(z, x, y) {
+import { drawAirspaces, drawAmaGrid, drawLabels } from './aviation.js';
+
+async function tile(z, x, y, dir = 'tiles') {
   try {
-    const res = await fetch(`tiles/${z}/${x}/${y}.webp`);
+    const res = await fetch(`${dir}/${z}/${x}/${y}.webp`);
     if (!res.ok) return null;
     return await createImageBitmap(await res.blob());
   } catch { return null; }
@@ -25,7 +27,7 @@ const mmss = (s) => { s = Math.round(s); return `${Math.floor(s / 60)}:${String(
  * routes: [{ wps:[{name,lat,lon}], rows: navlog rows, color, alt: bool }]
  * Returns { bytes (JPEG), width, height, zoom, nmPerPx }.
  */
-export async function renderRouteMap(routes, { width = 2400, height = 1650, title = '' } = {}) {
+export async function renderRouteMap(routes, { width = 2400, height = 1650, title = '', aviation = null } = {}) {
   const pts = routes.flatMap((r) => r.wps);
   if (pts.length < 2) return null;
   const lats = pts.map((p) => p.lat), lons = pts.map((p) => p.lon);
@@ -47,8 +49,18 @@ export async function renderRouteMap(routes, { width = 2400, height = 1650, titl
   // chart tiles
   const tx0 = Math.floor(ox / TILE), ty0 = Math.floor(oy / TILE), tx1 = Math.floor((ox + width) / TILE), ty1 = Math.floor((oy + height) / TILE);
   const jobs = [];
-  for (let tx = tx0; tx <= tx1; tx++) for (let ty = ty0; ty <= ty1; ty++) jobs.push(tile(z, tx, ty).then((img) => img && g.drawImage(img, tx * TILE - ox, ty * TILE - oy, TILE, TILE)));
+  for (let tx = tx0; tx <= tx1; tx++) for (let ty = ty0; ty <= ty1; ty++) jobs.push(tile(z, tx, ty, aviation ? 'chart' : 'tiles').then((img) => img && g.drawImage(img, tx * TILE - ox, ty * TILE - oy, TILE, TILE)));
   await Promise.all(jobs);
+  const s0 = Math.max(1, width / 2400);
+  if (aviation) {
+    // own chart: airspaces, grid minimum altitudes and labels drawn as vectors (sharp in print)
+    const PP = (la, lo) => { const q = worldPx(la, lo, z); return [q.x - ox, q.y - oy]; };
+    const k = 2 * s0;
+    drawAmaGrid(g, aviation.ama, PP, k);
+    drawAirspaces(g, aviation.list, PP, z, k);
+    const vis = (l) => { const [x, y] = PP(l.lat, l.lon); return x > -50 && y > -50 && x < width + 50 && y < height + 50; };
+    drawLabels(g, aviation.labels.filter((l) => vis(l) && (l.kind !== 'edge' || l.edgePx10 * 2 ** (z - 10) * 2 > l.text.length * 13)), PP, k * 0.9, aviation.ama.filter((c) => vis({ lat: (c.n + c.s) / 2, lon: (c.w + c.e) / 2 })));
+  }
 
   const latC = (box.n + box.s) / 2;
   const mPerPx = (156543.034 * Math.cos((latC * Math.PI) / 180)) / 2 ** z;
@@ -148,7 +160,7 @@ export async function renderRouteMap(routes, { width = 2400, height = 1650, titl
   g.fillText('N ^', width - 90 * s, 50 * s);
   if (title) { g.font = `700 ${22 * s}px Helvetica, Arial, sans-serif`; const tw = g.measureText(title).width; g.fillStyle = 'rgba(255,255,255,0.9)'; g.fillRect(30 * s, 24 * s, tw + 24 * s, 40 * s); g.fillStyle = '#111'; g.fillText(title, 42 * s, 52 * s); }
   g.font = `500 ${15 * s}px Helvetica, Arial, sans-serif`; g.fillStyle = 'rgba(0,0,0,0.7)'; g.textAlign = 'right';
-  g.fillText('Chart: AIP España · ENAIRE 1:500 000 (not to scale when printed) · check the current edition', width - 30 * s, height - 18 * s);
+  g.fillText(aviation ? 'Navlog chart: terrain SRTM · OpenStreetMap · airspace ENAIRE AIP (not to scale when printed) · check the official chart' : 'Chart: AIP España · ENAIRE 1:500 000 (not to scale when printed) · check the current edition', width - 30 * s, height - 18 * s);
 
   const blob = await new Promise((res) => c.toBlob(res, 'image/jpeg', 0.86));
   return { bytes: new Uint8Array(await blob.arrayBuffer()), width, height, zoom: z, pxPerNm };
