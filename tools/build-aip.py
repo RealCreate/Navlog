@@ -132,7 +132,7 @@ print(f"{len(routes)} VFR routes", file=sys.stderr)
 
 # Airspaces: restricted / danger / prohibited areas and controlled or information zones,
 # simplified for the map and for route-crossing checks.
-KEEP = {"R", "D", "P", "TSA", "TRA", "CTR", "CTA", "TMA", "FIZ", "ATZ", "RMZ", "TMZ", "Prohibido_Sobrevuelo", "PROHIBIDO VFR"}
+KEEP = {"R", "D", "P", "TSA", "TRA", "CTR", "CTA", "CTA-P", "TMA", "FIZ", "ATZ", "RMZ", "TMZ", "Prohibido_Sobrevuelo", "PROHIBIDO VFR"}
 
 
 def vlim(val, uom, code, txt):

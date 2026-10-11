@@ -180,6 +180,10 @@ export function airspaceCrossings(legs, airspaces) {
   const hits = new Map();
   if (!airspaces || !airspaces.length) return [];
   for (const sp of airspaces) { if (!sp._bb) sp._bb = bbox(sp.rings); }
+  // A CTA whose floor is "CTA sectors lower limit" (e.g. CTA Vitoria) is checked through its
+  // sectors (CTA-P, e.g. A2 CVIT-4 1000 ft AGL), each with its own floor.
+  const hasSectors = airspaces.some((sp) => sp.type === 'CTA-P');
+  airspaces = airspaces.filter((sp) => !(hasSectors && sp.type === 'CTA' && /sector/i.test(sp.lower || '')));
   for (const leg of legs) {
     const n = Math.max(2, Math.ceil(leg.dist / 0.5));
     for (let k = 0; k <= n; k++) {
@@ -213,6 +217,8 @@ export function crossingIssue({ sp, leg }) {
       return { level: 'bad', text: `${leg}: crosses restricted area ${label} (${limits}) — reroute or check activation by NOTAM` };
     case 'D':
       return { level: 'warn', text: `${leg}: crosses danger area ${label} (${limits}) — check activity (NOTAM)` };
+    case 'CTA-P':
+      return { level: 'info', text: `${leg}: ${varies ? 'may enter' : 'enters'} CTA sector ${label} class D (${limits}) — above its floor you need clearance${freq}` };
     case 'CTR': case 'CTA': case 'TMA':
       return { level: 'info', text: `${leg}: ${varies ? 'may enter' : 'enters'} ${sp.type} ${label}${sp.class ? ' class ' + sp.class : ''} (${limits}) — clearance required${freq}` };
     case 'FIZ': case 'ATZ': case 'RMZ': case 'TMZ':

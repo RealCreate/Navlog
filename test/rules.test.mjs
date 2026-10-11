@@ -64,3 +64,14 @@ test('AIP notes: Salamanca weekdays, no AVGAS at Huesca/León', () => {
   assert.ok(aipNotes('LEVD', 'arr', mon).some((n) => /PPR/.test(n.text)));
   assert.equal(aerodromeOpen('LEHC', new Date(Date.UTC(2026, 9, 12, 17, 30))).open, false); // summer closes 17:00Z
 });
+
+test('CTA Vitoria is checked through its sectors (CTA-P)', () => {
+  const sq = (la0, lo0, la1, lo1) => [[[la0, lo0], [la0, lo1], [la1, lo1], [la1, lo0], [la0, lo0]]];
+  const spaces = [
+    { type: 'CTA', id: 'LEVT2', name: 'CTA VITORIA AREA 2', lower: 'Límite inferior sectores CTA', upper: 'FL095', lowerFt: null, upperFt: 9500, rings: sq(42, -4, 43, -3) },
+    { type: 'CTA-P', id: 'A2 CVIT-4', name: 'A2 CVIT-4', lower: '1000ft AGL', upper: 'FL095', lowerFt: 1000, agl: true, upperFt: 9500, rings: sq(42.5, -3.8, 42.7, -3.4) },
+  ];
+  const legs = [{ a: { lat: 42.6, lon: -3.9 }, b: { lat: 42.6, lon: -3.3 }, alt: 4500, dist: 18, name: 'A → B' }];
+  const hits = airspaceCrossings(legs, spaces);
+  assert.deepEqual(hits.map((h) => h.sp.id), ['A2 CVIT-4']);
+});
