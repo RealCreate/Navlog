@@ -9,7 +9,7 @@ import { performance, pressureAlt, isaTemp, FT_PER_M } from './perf.js';
 import { MB_TYPES, computeMb, fmtMoment, cgLimitsAt, KG_TO_LB } from './mb.js';
 import { zl, utc, local } from './time.js';
 import { APPROVED, IFR_ONLY, EASY_FIRST, FULL_STOP, CLOSING_LOCAL, NO_REFUEL, FREQS, aerodromeOpen, airspaceCrossings, crossingIssue, buildFpl, departureBriefing, arrivalBriefing, temThreats } from './rules.js';
-import { listPlans, savePlan, deletePlan, getPlan, planFromPdf } from './plans.js';
+import { listPlans, savePlan, deletePlan, getPlan, planFromPdf, embedPlan } from './plans.js';
 import { sunTimes } from './sun.js';
 
 const L = window.L;
@@ -53,6 +53,7 @@ function load() {
   return defaultState();
 }
 function save() {
+  if (typeof syncActiveLeg === 'function') syncActiveLeg();
   try { localStorage.setItem(STORE, JSON.stringify(state)); } catch { /* private mode */ }
 }
 
@@ -622,11 +623,11 @@ const wideMQ = matchMedia('(min-width: 900px)');
 const isWide = () => wideMQ.matches;
 
 function showPanels() {
-  const key = state.mode === 'mb' ? 'mb' : tab;
+  const key = state.mode === 'plan' ? tab : state.mode;
   Object.entries(panels).forEach(([k, p]) => { p.hidden = k !== key; });
-  document.getElementById('summary').hidden = state.mode === 'mb';
+  document.getElementById('summary').hidden = state.mode !== 'plan';
   document.getElementById('mbSummary').hidden = state.mode !== 'mb';
-  document.getElementById('planTabs').hidden = state.mode === 'mb';
+  document.getElementById('planTabs').hidden = state.mode !== 'plan';
   document.querySelectorAll('#modes button').forEach((x) => x.classList.toggle('on', x.dataset.mode === state.mode));
   document.querySelectorAll('#tabs button').forEach((x) => x.classList.toggle('on', x.dataset.tab === tab));
 }
@@ -793,6 +794,8 @@ function renderRoute() {
     html += '</div>';
   }
   html += `<p class="note">Winds marked “auto” are filled from the Open-Meteo forecast at each leg's altitude and time${state.windSource ? ` (fetched ${new Date(state.windSource.at).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })})` : ''}. The SOP's approved sources are <a href="https://www.windy.com" target="_blank" rel="noopener">windy.com</a> and <a href="https://ama.aemet.es/en" target="_blank" rel="noopener">ama.aemet.es</a> — check them on Windy (link on each leg); a wind you type is kept. Winds are true direction. VAR is east-positive (Burgos 1°E): MC = TC − VAR E. Drag the small dot in the middle of a leg to insert a waypoint; drag a waypoint to move it.</p>`;
+  const ml = state.mission && state.mission.legs.find((l) => l.id === state.mission.active);
+  if (ml) html = `<div class="group"><div class="row"><span class="grow">Mission leg: <b>${esc(ml.label)}</b>${state.mission.type === 'local' ? ' <small class="label">(alternate shared by both navlogs)</small>' : ''}</span><button class="btn small" data-act="toMission">Mission</button></div></div>` + html;
   panels.route.innerHTML = html;
 }
 
@@ -814,6 +817,7 @@ panels.route.addEventListener('change', (e) => {
   update({ rerenderPanels: true });
 });
 panels.route.addEventListener('click', (e) => {
+  if (e.target.closest('[data-act=toMission]')) return document.querySelector('#modes [data-mode=mission]').click();
   const b = e.target.closest('[data-act]'); if (!b) return;
   const r = route();
   const act = b.dataset.act;
@@ -1186,6 +1190,7 @@ function renderPanels() {
   document.querySelectorAll('#routeSel button').forEach((b) => b.classList.toggle('on', b.dataset.route === state.active));
   document.getElementById('routeSel').hidden = tab === 'fuel' || tab === 'brief';
   if (state.mode === 'mb') return renderMB();
+  if (state.mode === 'mission') return renderMission();
   if (tab === 'route') renderRoute();
   if (tab === 'navlog') renderNavlog();
   if (tab === 'fuel') renderFuel();
@@ -1809,6 +1814,280 @@ document.getElementById('btnOffline').addEventListener('click', async () => {
   await Promise.all(Array.from({ length: 6 }, worker));
   toast(`Chart saved for offline (${urls.length} tiles)`);
 });
+
+/* ---------------- Mission (Phase 3 / solo manual) ----------------
+ * Solo flights manual, mandatory documents:
+ *   LOCAL NAVIGATION: 1 M&B · 2 NAV LOGS (one prepared + a reserve one), each with its alternate
+ *   CROSS-COUNTRY: 2 M&B (1 for each flight) · 2 NAV LOGS (1 for each flight), 2 AIRPORTS PLANNED, TOTAL 4 NAV LOGS
+ *   TRIANGULAR: 300 NM in total, two airports plus the base, two different trips prepared, destinations
+ *               previously visited with an instructor, latest departure time (closure / sunset).
+ * Company alternate policy (Phase 3): one FlyBy base is always one of the alternates (LEBG ↔ LERJ).
+ * Cross-countries are flown without refuelling; triangular legs may refuel where AVGAS 100LL is available.
+ */
+const clone = (o) => (o == null ? o : JSON.parse(JSON.stringify(o)));
+let legSwap = false; // true while a leg other than the open one is being computed
+
+function syncActiveLeg() {
+  const m = state.mission;
+  if (!m || !m.active || legSwap) return;
+  const leg = m.legs.find((l) => l.id === m.active);
+  if (!leg) return;
+  leg.main = clone(state.main); leg.time = state.time;
+  if (m.type === 'local') m.sharedAlt = clone(state.alt); else leg.alt = clone(state.alt);
+  if (legChainIndex(leg) === 0) leg.fob = +state.flight.fob || 0;
+}
+const legsOfChain = (leg) => state.mission.legs.filter((l) => l.chain === leg.chain);
+const legChainIndex = (leg) => legsOfChain(leg).indexOf(leg);
+
+// Run fn with a leg loaded into the planner (state + result), then put everything back.
+function withLeg(leg, fobL, fn) {
+  const keep = { main: state.main, alt: state.alt, time: state.time, fob: state.flight.fob, result, active: state.active };
+  legSwap = true;
+  try {
+    state.main = clone(leg.main); state.alt = clone(state.mission.type === 'local' ? state.mission.sharedAlt : leg.alt) || { waypoints: [], stdDep: false, stdArr: false };
+    state.time = leg.time; state.flight.fob = fobL; state.active = 'main';
+    result = compute();
+    return fn();
+  } finally {
+    Object.assign(state, { main: keep.main, alt: keep.alt, time: keep.time, active: keep.active }); state.flight.fob = keep.fob; result = keep.result;
+    legSwap = false;
+  }
+}
+
+/** Every leg's figures, with the fuel carried from leg to leg (refuel → full tanks). */
+function missionFigures() {
+  const m = state.mission, out = new Map();
+  const cap = acOf(state.flight.type).fuelMaxL;
+  for (const leg of m.legs) {
+    const i = legChainIndex(leg);
+    const prev = i > 0 ? out.get(legsOfChain(leg)[i - 1].id) : null;
+    const fob = i === 0 ? (+leg.fob || +state.flight.fob || 0) : leg.refuel ? cap : prev ? Math.max(0, prev.remaining) : 0;
+    const fig = withLeg(leg, fob, () => {
+      const t = flightTime();
+      const dep = endpoint('main', 0), dest = endpoint('main', -1), alt = endpoint('alt', -1);
+      const ldg = new Date(t.getTime() + result.main.totals.timeSec * 1000);
+      return {
+        fob, dep, dest, alt, t, ldg, dist: result.main.totals.dist, timeSec: result.main.totals.timeSec, trip: result.main.totals.trip,
+        required: result.fuel.required, fuelOk: result.fuel.checks.every((c) => c.ok), mbOk: result.mb ? result.mb.ok : null,
+        remaining: fob - (+state.flight.taxi || 0) - result.main.totals.trip,
+        issues: planIssues().filter((x) => x.level === 'bad').map((x) => x.text),
+      };
+    });
+    out.set(leg.id, fig);
+  }
+  return out;
+}
+
+function newLeg(label, chain, dep, dest, time, extra = {}) {
+  const A = adByIcao(dep), B = adByIcao(dest);
+  const alt = B && (dest === 'LEBG' ? 'LERJ' : dest === 'LERJ' ? 'LEBG' : 'LEBG');
+  const altAd = alt && adByIcao(alt);
+  return {
+    id: `L${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, label, chain, time,
+    main: { waypoints: [A, B].filter(Boolean).map(adWaypoint), stdDep: true, stdArr: true },
+    alt: altAd && B ? { waypoints: [adWaypoint(B), adWaypoint(altAd)], stdDep: false, stdArr: true } : { waypoints: [], stdDep: false, stdArr: false },
+    refuel: false, ...extra,
+  };
+}
+
+function createMission(type, d) {
+  syncActiveLeg();
+  const base = d.base || 'LEBG';
+  const t0 = state.time || new Date().toISOString();
+  const later = (min) => new Date(new Date(t0).getTime() + min * 60e3).toISOString();
+  const m = { type, legs: [], active: null, created: new Date().toISOString() };
+  if (type === 'local') {
+    m.legs.push(newLeg('Nav 1 · local', 'n1', base, base, t0));
+    m.legs.push(newLeg('Nav 2 · reserve local', 'n2', base, base, t0));
+    const altAd = adByIcao(base === 'LEBG' ? 'LERJ' : 'LEBG');
+    m.sharedAlt = { waypoints: [adWaypoint(adByIcao(base)), adWaypoint(altAd)], stdDep: false, stdArr: true };
+  } else if (type === 'xc') {
+    m.legs.push(newLeg(`Outbound · ${base} → ${d.dest}`, 'a', base, d.dest, t0));
+    m.legs.push(newLeg(`Inbound · ${d.dest} → ${base}`, 'a', d.dest, base, later(120)));
+    m.legs.push(newLeg(`Reserve outbound · ${base} → ${d.reserve}`, 'b', base, d.reserve, t0));
+    m.legs.push(newLeg(`Reserve inbound · ${d.reserve} → ${base}`, 'b', d.reserve, base, later(120)));
+  } else {
+    const trip = (chain, a, b, name) => {
+      m.legs.push(newLeg(`${name} leg 1 · ${base} → ${a}`, chain, base, a, t0));
+      m.legs.push(newLeg(`${name} leg 2 · ${a} → ${b}`, chain, a, b, later(120)));
+      m.legs.push(newLeg(`${name} leg 3 · ${b} → ${base}`, chain, b, base, later(240)));
+    };
+    trip('a', d.a1, d.a2, 'Trip A');
+    trip('b', d.b1, d.b2, 'Trip B');
+  }
+  m.legs.forEach((l, i) => { if (i === 0 || legChainIndexIn(m, l) === 0) l.fob = +state.flight.fob || acOf(state.flight.type).fuelMaxL; });
+  state.mission = m;
+  openLeg(m.legs[0].id, true);
+  state.mode = 'mission'; showPanels(); renderPanels();
+}
+const legChainIndexIn = (m, leg) => m.legs.filter((l) => l.chain === leg.chain).indexOf(leg);
+
+function openLeg(id, quiet) {
+  syncActiveLeg();
+  const m = state.mission, leg = m.legs.find((l) => l.id === id);
+  if (!leg) return;
+  const figs = legChainIndex(leg) > 0 ? missionFigures() : null;
+  m.active = id;
+  state.main = clone(leg.main);
+  state.alt = clone(m.type === 'local' ? m.sharedAlt : leg.alt) || { waypoints: [], stdDep: false, stdArr: false };
+  state.time = leg.time; state.active = 'main';
+  state.flight.fob = figs ? Math.round(figs.get(id).fob * 10) / 10 : +leg.fob || state.flight.fob;
+  syncSlider();
+  if (!quiet) { state.mode = 'plan'; tab = 'route'; showPanels(); toast(`Editing ${leg.label}`); }
+  update({ rerenderPanels: true });
+  setTimeout(fitRoute, 50);
+}
+
+function missionFormHtml(replace) {
+  const opts = (sel) => APPROVED.map((ad) => `<option ${ad === sel ? 'selected' : ''}>${ad}</option>`).join('');
+  return `<div class="row wrap">
+      <label class="field"><span>Type</span><select id="msType">
+        <option value="local">Local navigation</option><option value="xc">Cross-country</option><option value="tri">Triangular</option></select></label>
+      <label class="field narrow"><span>Base</span><select id="msBase">${['LEBG', 'LERJ'].map((x) => `<option>${x}</option>`).join('')}</select></label>
+    </div>
+    <div class="row wrap" id="msXc" hidden>
+      <label class="field narrow"><span>Destination</span><select id="msDest">${opts('LEVT')}</select></label>
+      <label class="field narrow"><span>Reserve airport</span><select id="msRes">${opts('LEVD')}</select></label>
+    </div>
+    <div class="row wrap" id="msTri" hidden>
+      <label class="field narrow"><span>Trip A · 1st</span><select id="msA1">${opts('LEVD')}</select></label>
+      <label class="field narrow"><span>Trip A · 2nd</span><select id="msA2">${opts('LELN')}</select></label>
+      <label class="field narrow"><span>Trip B · 1st</span><select id="msB1">${opts('LEVT')}</select></label>
+      <label class="field narrow"><span>Trip B · 2nd</span><select id="msB2">${opts('LEPP')}</select></label>
+    </div>
+    <div class="row"><span class="grow label">Local: 2 navlogs + a shared alternate, 1 M&amp;B. Cross-country: 2 flights + 2 for the reserve airport = 4 navlogs, 1 M&amp;B per flight, no refuel. Triangular: two different trips, two airports + base, 300 NM each (solo manual).</span></div>
+    <button class="btn primary wide" data-act="msCreate">${replace ? 'Replace the mission' : 'Create mission'}</button>`;
+}
+
+function renderMission() {
+  syncActiveLeg();
+  const m = state.mission;
+  if (!m) {
+    panels.mission.innerHTML = `<div class="group-title"><span>New mission</span></div><div class="group">${missionFormHtml(false)}</div>
+      <p class="note">A mission keeps every navlog, alternate and M&amp;B of the flight together and downloads them as one PDF.</p>`;
+    return wireMissionForm();
+  }
+  const figs = missionFigures();
+  const names = { local: 'Local navigation', xc: 'Cross-country', tri: 'Triangular' };
+  let html = `<div class="group-title"><span>${names[m.type]}</span><button class="btn small primary" data-act="msPdf">Download all (PDF)</button></div><div class="group">`;
+  for (const leg of m.legs) {
+    const f = figs.get(leg.id), i = legChainIndex(leg);
+    const planned = (leg.main.waypoints || []).length >= 3;
+    const ok = planned && f.fuelOk && f.mbOk !== false && !f.issues.length;
+    html += `<div class="wx${leg.id === m.active ? ' active' : ''}"><div class="wx-head"><b>${esc(leg.label)}</b>${leg.id === m.active ? '<span class="label">open</span>' : ''}<span class="badge ${ok ? 'ok' : planned ? 'bad' : 'warn'}">${ok ? 'OK' : planned ? 'CHECK' : 'TO PLAN'}</span></div>
+      ${planned ? '' : '<div class="label warn">Not planned yet — open it and add the departure/arrival reporting points and turning points.</div>'}
+      <div class="label">${f.dep?.icao || '?'} → ${f.dest?.icao || '?'}${f.alt ? ` · alt ${f.alt.icao}` : ''} · ${f.dist} NM · ${fmtHMS(f.timeSec).slice(0, 5)} · T/O ${zl(f.t)} → LDG ${zl(f.ldg)}</div>
+      <div class="label">FOB ${f.fob.toFixed(1)} L${i > 0 ? (leg.refuel ? ' (refuel: full tanks)' : ' (carried from the previous leg)') : ''} · trip ${f.trip.toFixed(1)} L · minimum ${f.required} L ${f.fuelOk ? '✓' : '✕'} · M&amp;B ${f.mbOk == null ? '—' : f.mbOk ? '✓' : '✕'}</div>
+      ${f.issues.length ? `<div class="label warn">${f.issues.map(esc).join('<br>')}</div>` : ''}
+      <div class="row" style="padding:6px 0 0">${i > 0 && m.type === 'tri' ? `<label class="tem-row" style="flex:1"><input type="checkbox" data-refuel="${leg.id}" ${leg.refuel ? 'checked' : ''}><span>Refuel at ${f.dep?.icao || ''}${f.dep && NO_REFUEL.includes(f.dep.icao) ? ' — no refuelling there (AIP)' : ' (only where AVGAS 100LL is available)'}</span></label>` : '<span class="grow"></span>'}
+      <button class="btn small" data-open="${leg.id}">${leg.id === m.active ? 'Edit' : 'Open'}</button></div></div>`;
+  }
+  html += '</div>';
+  html += `<div class="group-title"><span>Mission checks</span></div><div class="group">${missionChecks(figs).map((c) => `<div class="row ${c.ok ? 'check-ok' : 'check-bad'}"><span class="grow label">${esc(c.text)}</span><span class="value">${c.ok ? 'OK' : '✕'}</span></div>`).join('')}</div>
+    <p class="note">Open a leg to plan it on the chart — it is saved back into the mission automatically. Both local navlogs share one alternate. Set each leg's time with the time slider while it is open. Cross-countries carry the fuel from the outbound flight (no refuel).</p>
+    <details class="group" style="padding:10px 12px"><summary class="label">New mission</summary>${missionFormHtml(true)}</details>`;
+  panels.mission.innerHTML = html;
+  wireMissionForm();
+}
+function wireMissionForm() {
+  const sel = panels.mission.querySelector('#msType');
+  if (!sel) return;
+  const sync = () => { panels.mission.querySelector('#msXc').hidden = sel.value !== 'xc'; panels.mission.querySelector('#msTri').hidden = sel.value !== 'tri'; };
+  sel.addEventListener('change', sync); sync();
+}
+
+function missionChecks(figs) {
+  const m = state.mission, out = [];
+  const legs = m.legs.map((l) => ({ l, f: figs.get(l.id) }));
+  const ads = (fs) => [...new Set(fs.flatMap(({ f }) => [f.dep?.icao, f.dest?.icao]).filter(Boolean))];
+  if (m.type === 'local') {
+    out.push({ ok: legs.length >= 2 && legs.every(({ l }) => l.main.waypoints.length >= 3), text: 'Local navigation: 2 nav logs (one prepared + a reserve one), both planned' });
+    out.push({ ok: !!(m.sharedAlt && m.sharedAlt.waypoints.length > 1), text: 'Alternate planned for the local navigations (company alternate policy)' });
+    out.push({ ok: true, text: 'M&B: 1 for the local navigation' });
+  }
+  if (m.type === 'xc') {
+    out.push({ ok: legs.length >= 4 && legs.every(({ l }) => l.main.waypoints.length >= 3), text: 'Cross-country: 2 nav logs (1 per flight) + 2 for the reserve airport = 4 nav logs, all planned' });
+    out.push({ ok: legs.every(({ f }) => f.alt), text: 'Every navigation planned with its alternate (one FlyBy base among the alternates)' });
+    out.push({ ok: true, text: 'M&B: 1 for each flight (included in the download)' });
+  }
+  if (m.type === 'tri') {
+    for (const ch of ['a', 'b']) {
+      const tl = legs.filter(({ l }) => l.chain === ch);
+      const nm = Math.round(tl.reduce((t, { f }) => t + f.dist, 0));
+      out.push({ ok: nm >= 300, text: `Trip ${ch.toUpperCase()}: ${nm} NM in total (must cover 300 NM)` });
+      const visited = ads(tl).filter((x) => x !== 'LEBG' && x !== 'LERJ');
+      out.push({ ok: visited.length >= 2, text: `Trip ${ch.toUpperCase()}: two airports plus the base (${visited.join(', ') || '—'})` });
+    }
+    const a = ads(legs.filter(({ l }) => l.chain === 'a')).sort().join(), b = ads(legs.filter(({ l }) => l.chain === 'b')).sort().join();
+    out.push({ ok: a !== b, text: 'Two different trips prepared' });
+  }
+  const notVisited = ads(legs).filter((x) => !state.unlocked.includes(x));
+  out.push({ ok: !notVisited.length, text: notVisited.length ? `Not yet visited with an instructor: ${notVisited.join(', ')} (solo: destinations must have been flown with an FI)` : 'All aerodromes already visited with an instructor (unlocked list)' });
+  // latest departure: every leg lands before closure / sunset
+  for (const { l, f } of legs) {
+    if (!f.dest) continue;
+    const open = aerodromeOpen(f.dest.icao, f.ldg);
+    const sun = sunTimes(f.ldg, f.dest.lat, f.dest.lon);
+    if ((open.known && !open.open) || (sun.set && f.ldg > sun.set)) out.push({ ok: false, text: `${l.label}: landing ${zl(f.ldg)} after ${open.known && !open.open ? 'closure' : 'sunset'} — depart earlier` });
+  }
+  return out;
+}
+
+panels.mission.addEventListener('click', async (e) => {
+  const o = e.target.closest('[data-open]');
+  if (o) return openLeg(o.dataset.open);
+  if (e.target.closest('[data-act=msCreate]')) {
+    const v = (id) => panels.mission.querySelector(id)?.value;
+    if (state.mission && !confirm('Replace the current mission? Its legs will be lost (save it under Plans first if needed).')) return;
+    return createMission(v('#msType'), { base: v('#msBase'), dest: v('#msDest'), reserve: v('#msRes'), a1: v('#msA1'), a2: v('#msA2'), b1: v('#msB1'), b2: v('#msB2') });
+  }
+  if (e.target.closest('[data-act=msPdf]')) return downloadMission();
+});
+panels.mission.addEventListener('change', (e) => {
+  const r = e.target.dataset.refuel;
+  if (!r) return;
+  const leg = state.mission.legs.find((l) => l.id === r);
+  leg.refuel = e.target.checked; save(); renderMission();
+});
+
+async function downloadMission() {
+  const m = state.mission;
+  if (!m) return;
+  syncActiveLeg();
+  const { PDFDocument } = window.PDFLib;
+  toast('Building the mission PDF…');
+  try {
+    const out = await PDFDocument.create();
+    const add = async (bytes) => { const d = await PDFDocument.load(bytes); (await out.copyPages(d, d.getPageIndices())).forEach((p) => out.addPage(p)); };
+    const figs = missionFigures();
+    const mbDone = new Set();
+    for (const leg of m.legs) {
+      const f = figs.get(leg.id);
+      // navlog (+ its alternate)
+      const navBytes = await withLeg(leg, f.fob, () => {
+        const sheets = [{ header: headerFor('main'), rows: result.main.rows }];
+        if (result.alt.rows.length) sheets.push({ header: headerFor('alt'), rows: result.alt.rows });
+        return result.main.rows.length ? buildNavlogPdf(sheets) : null;
+      });
+      if (navBytes) await add(await navBytes);
+      // M&B: 1 for a local navigation, 1 per flight otherwise (reserve flights included)
+      const key = m.type === 'local' ? 'local' : leg.id;
+      if (!mbDone.has(key)) {
+        mbDone.add(key);
+        const mbBytes = withLeg(leg, f.fob, () => (result.mb ? buildMbPdf(result.mb, {
+          date: flightTime().toLocaleDateString('en-GB'), reg: state.flight.reg, studentCode: state.mb.studentCode,
+          weather: state.flight.weather, notams: state.mb.notams, perf: perfResults(),
+        }) : null));
+        if (mbBytes) await add(await mbBytes);
+      }
+    }
+    if (!out.getPageCount()) return toast('Plan at least one leg first.');
+    embedPlan(out, planData());
+    const names = { local: 'Local', xc: 'XC', tri: 'Triangular' };
+    saveBlob(await out.save(), `Mission_${names[m.type]}_${flightTime().toISOString().slice(0, 10)}.pdf`);
+    toast('Mission PDF ready');
+  } catch (err) { console.error(err); toast('Could not build the mission PDF: ' + err.message); }
+}
 
 /* ---------------- Boot ---------------- */
 
