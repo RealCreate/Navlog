@@ -28,18 +28,22 @@ from osgeo import osr
 sr = osr.SpatialReference(); sr.ImportFromEPSG(3857); ds.SetProjection(sr.ExportToWkt())
 ds.GetRasterBand(1).WriteArray(elev); ds = None
 print('dem', elev.shape, elev.min(), elev.max())
-q = f"""[out:json][timeout:120];(
-way["highway"~"^(motorway|trunk|primary)$"]({S},{W},{N},{E});
-way["railway"="rail"]({S},{W},{N},{E});
-way["waterway"="river"]({S},{W},{N},{E});
-way["natural"="water"]["water"~"reservoir|lake"]({S},{W},{N},{E});
-node["place"~"^(city|town)$"]({S},{W},{N},{E});
-node["place"="village"]["population"]({S},{W},{N},{E});
-way["landuse"="residential"]["name"]({S},{W},{N},{E});
-);out geom;"""
-for host in ['https://overpass.private.coffee/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter', 'https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter']:
-    try:
-        req = urllib.request.Request(host, data=urllib.parse.urlencode({'data': q}).encode(), headers={'User-Agent': 'navlog-chart-mock/1.0 (github.com/RealCreate/Navlog)'})
-        r = urllib.request.urlopen(req, timeout=180).read()
-        open(f'{out}/osm.json', 'wb').write(r); print('osm', len(r)); break
-    except Exception as e: print('overpass fail', host, e)
+bb = f"({S},{W},{N},{E})"
+parts = {
+ 'roads': f'way["highway"~"^(motorway|trunk|primary)$"]{bb};',
+ 'rail': f'way["railway"="rail"]{bb};',
+ 'rivers': f'way["waterway"="river"]{bb};',
+ 'water': f'way["natural"="water"]["water"~"reservoir|lake"]{bb};',
+ 'places': f'node["place"~"^(city|town|village)$"]{bb};',
+}
+import time
+for name, body in parts.items():
+    q = f"[out:json][timeout:90];({body});out geom;"
+    ok = False
+    for host in ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter', 'https://overpass.private.coffee/api/interpreter']:
+        try:
+            req = urllib.request.Request(host, data=urllib.parse.urlencode({'data': q}).encode(), headers={'User-Agent': 'navlog-chart-mock/1.0 (github.com/RealCreate/Navlog)'})
+            r = urllib.request.urlopen(req, timeout=150).read()
+            open(f'{out}/osm-{name}.json', 'wb').write(r); print('osm', name, len(r), host); ok = True; break
+        except Exception as e: print('overpass fail', name, host, e)
+        time.sleep(3)
