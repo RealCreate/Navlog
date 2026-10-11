@@ -405,7 +405,8 @@ function addPoint(ref) {
         const idOf = (w) => (POINTS.find((x) => x.key === w.ref) || {}).id;
         for (let j = k; j < wps.length; j++) { const a = pa(idOf(wps[j])); if (a) wps[j].alt = a; if (j > k) wps[j].proc = 'arr'; }
         let lastAlt = pa(lastRef.id);
-        if (lastAlt) last.alt = lastAlt; // established at the procedure altitude over the entry point
+        if (lastAlt) { last.alt = lastAlt; last.altAuto = false; } // established at the procedure altitude over the entry point
+        last.entry = true; // its level comes from the procedure, not the cruising-level rule
         for (const id of proc.points.slice(1)) {
           const p = vrpRef(ad.icao, id); if (!p) continue;
           const wp = newWaypoint(p.lat, p.lon, p);
@@ -612,6 +613,8 @@ function drawLegAnnotations(key, rows, wps, isAlt) {
     }
     // HAT on the leg, numbered: Heading · Altitude · Time (alternate legs A1, A2…)
     if (z < 9) continue;
+    const pxLen = map.latLngToLayerPoint([a.lat, a.lon]).distanceTo(map.latLngToLayerPoint([b.lat, b.lon]));
+    if (pxLen < 110) continue; // too short at this zoom: zoom in to see its HAT
     const ete = legRows.reduce((t, r) => t + r.eteSec, 0);
     L.marker(lerp(a, b, 0.5), {
       pane: 'marks', interactive: false,
@@ -625,7 +628,7 @@ function fitRoute() {
   const ml = state.mission && state.mission.legs.find((l) => l.id === state.mission.active);
   const tgt = ml && ml.target && adByIcao(ml.target);
   if (tgt) all.push({ lat: tgt.lat, lon: tgt.lon });
-  if (all.length > 1) map.fitBounds(L.latLngBounds(all.map((w) => [w.lat, w.lon])), { paddingBottomRight: [40, isWide() ? 240 : sheetH() + 40], paddingTopLeft: [isWide() ? 440 : 40, 120], maxZoom: 11 });
+  if (all.length > 1) map.fitBounds(L.latLngBounds(all.map((w) => [w.lat, w.lon])), { paddingBottomRight: [40, isWide() ? 240 : sheetH() + 40], paddingTopLeft: [isWide() ? document.getElementById('sheet').getBoundingClientRect().right + 30 : 40, 120], maxZoom: 11 });
 }
 
 map.on('zoomend', () => drawRoutes());
@@ -798,6 +801,8 @@ function seraIssues(key) {
   const r = state[key], nl = result[key];
   nl.rows.forEach((row) => {
     if (row.phase !== 'cruise' || row.auto) return;
+    const to = r.waypoints[row.legIndex];
+    if (to && (to.entry || to.proc)) return; // procedure altitude (VAC / SOP)
     const h = semicircularHint(row.mc, row.alt);
     if (h) out.push({ level: 'warn', text: `${row.from} → ${row.to}: ${h}` });
   });
@@ -878,7 +883,7 @@ function renderRoute() {
           const fuel = Math.round(legRows.reduce((t, x) => t + x.fuel, 0) * 10) / 10;
           const last = legRows[legRows.length - 1];
           const dist = legRows.reduce((t, x) => t + x.dist, 0);
-          const sera = !w.proc && !(i === 1 && stdOn.dep) && !(i === wps.length - 1 && stdOn.arr) ? semicircularHint(last.mc, parseAlt(w.alt)) : null;
+          const sera = !w.proc && !w.entry && !(i === 1 && stdOn.dep) && !(i === wps.length - 1 && stdOn.arr) ? semicircularHint(last.mc, parseAlt(w.alt)) : null;
           html += `<div class="leg-out">${w.proc ? `<span class="tag">${w.proc === 'dep' ? 'Departure route' : 'Arrival route'} · VAC</span>` : ''}<span>TC <b>${last.tc}°</b></span><span>MH <b>${last.mh}°</b></span><span>Dist <b>${dist} NM</b></span><span>GS <b>${last.gs} kt</b></span><span>ETE <b>${fmtMMSS(ete)}</b></span><span>Fuel <b>${fuel} L</b></span>${legRows.length > 1 ? `<span>incl. <b>${legRows.find((x) => x.auto)?.to || ''}</b></span>` : ''}${sera ? `<span class="hint">${sera}</span>` : ''}</div>`;
         }
       }
@@ -2482,6 +2487,7 @@ panels.mission.addEventListener('click', async (e) => {
   if (e.target.closest('[data-act=msSingle]')) {
     if (state.mission && !confirm('Leave the current mission and plan a single flight? (Save it under Plans first if needed.)')) return;
     syncActiveLeg(); state.mission = null; state.missionSkipped = true;
+    if (!state.flight.callsign) state.flight.callsign = ((state.flight.solo && state.settings.soloOut) || state.settings.callsign || '').toUpperCase();
     return goStep('plan');
   }
   if (e.target.closest('[data-act=msPdf]')) return downloadBriefing();
