@@ -132,6 +132,7 @@ export function aerodromeOpen(icao, t) {
       const u = (h * 60 + m - (isEuSummer(t) ? 120 : 60) + 1440) % 1440;
       txt = `${String(Math.floor(u / 60)).padStart(2, '0')}:${String(u % 60).padStart(2, '0')}Z (${lt})`;
     }
+    if (c === 'H24') return { known: true, open: true, text: 'open H24 (AIP AD 2.3)' };
     return { known: false, text: c ? `closes ${txt} (Phase 3 manual)` : 'check AD 2.3 for hours' };
   }
   const season = isEuSummer(t) ? 'summer' : 'winter';

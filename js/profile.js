@@ -83,8 +83,9 @@ export function plannedProfile(rows, depElev, destElev) {
   let d = 0;
   let alt = depElev ?? rows[0]?.alt ?? 0;
   pts.push({ d, alt, label: rows[0]?.from });
-  rows.forEach((r) => {
-    const target = r.phase === 'arr' && destElev != null ? destElev : (r.alt ?? alt);
+  rows.forEach((r, i) => {
+    // only the last arrival row ends at the field; corridor points keep their VAC altitude
+    const target = r.phase === 'arr' && destElev != null && i === rows.length - 1 ? destElev : (r.alt ?? alt);
     if (r.phase === 'cruise' && target !== alt) pts.push({ d, alt: target });
     d += r.dist; alt = target;
     pts.push({ d, alt, label: r.to, auto: r.auto });
