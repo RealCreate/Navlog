@@ -20,8 +20,8 @@ jobs:
         run: mkdir -p out && python3 src/tools/build-aip.py out/aip.json || true
       - name: Probe
         run: |
-          mkdir -p out
-          python3 src/tools/probe-vfrlayers.py out 2>&1 | tee out/log.txt
+          sudo apt-get update -qq && sudo apt-get install -y -qq python3-pil
+          bash src/tools/probe-live.sh
       - name: Publish to previews branch
         run: |
           cd out
