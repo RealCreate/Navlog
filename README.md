@@ -16,6 +16,7 @@ Live: https://realcreate.github.io/Navlog/ (installable on iPad: Share → Add t
 - Date & time slider for the flight, with sunrise/sunset and landing-time check.
 - Main route + alternate route, fuel policy check, mass & balance for every fleet type on its own sheet (P2008, P2002, P-Mentor, PS-28, C172N, C172RG, PA-28-181, P2006T/NG).
 - Take-off and landing distances from each aircraft's SOP tables (pressure altitude, temperature, wind, surface, slope), added to the M&B PDF.
+- "Download briefing": one PDF in the SOP briefing order (go/no-go, weather, NOTAMs, ATC FPL, mission objective, M&B + fuel, performance, TEM) followed by the navlog(s) and M&B sheet(s) — for a whole mission too.
 - Mission view: local (2 navlogs + shared alternate), cross-country (4 navlogs, fuel carried, no refuel) and triangular (two trips, 300 NM checks) — one PDF with every navlog and M&B.
 - Times in UTC with local time in brackets.
 - **Navlog PDF** fills the school's "Visual Operational Flight Plan" form.

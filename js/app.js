@@ -1,6 +1,7 @@
 import { AERODROMES, POINTS, FLEET_TYPES, fleetType, SOP, adByIcao, mergeAip, procedureFor, PROCEDURES } from './data.js';
 import { computeNavlog, stdFlags, fuelPolicy, fmtMMSS, fmtHMS, fmtVar, fmtAlt, parseAlt, cruiseTas, distanceNm, midpoint } from './nav.js';
 import { buildNavlogPdf, buildMbPdf } from './pdf.js';
+import { addBriefingPages, addMissionCover, fonts as pdfFonts } from './briefpdf.js';
 import { sampleTerrain, plannedProfile, drawProfile, profileAt } from './profile.js';
 import { PlacesLayer } from './places.js';
 import { fetchWinds } from './winds.js';
@@ -1312,62 +1313,41 @@ function weatherIssues() {
 
 function copyBtn(id) { return `<div class="copy-row"><button class="btn small" data-copy="${id}">Copy</button></div>`; }
 
-function renderBriefing() {
+// Everything on the briefing list (SOP briefing order), for the Briefing tab and the briefing PDF.
+function briefingData() {
   const f = state.flight;
   const dep = endpoint('main', 0), dest = endpoint('main', -1), alt = endpoint('alt', -1);
   const { to, ldg, altArr } = times();
-  loadWeather();
+  const ft = fleetType(f.type);
   const issues = dedupe([...weatherIssues(), ...planIssues()]);
   const order = { bad: 0, warn: 1, info: 2 };
-  issues.sort((a, b) => order[a.level] - order[b.level]);
-  const bad = issues.filter((i) => i.level === 'bad').length, warn = issues.filter((i) => i.level === 'warn').length;
-  let html = `<div class="group-title"><span>Go / no-go · ${bad ? `<span class="badge bad">${bad} no-go</span>` : '<span class="badge ok">no blockers</span>'} ${warn ? `<span class="badge warn">${warn} to check</span>` : ''}</span></div>`;
-  html += issues.length
-    ? `<ul class="issues">${issues.map((i) => `<li class="${i.level}"><span class="ic">${i.level === 'bad' ? '✕' : i.level === 'warn' ? '!' : 'i'}</span><span>${esc(i.text)}</span></li>`).join('')}</ul>`
-    : `<div class="group"><div class="empty">${result.main.rows.length ? 'No issues found. The final decision stays with you and your instructor.' : 'Plan a route to see the checks.'}</div></div>`;
-
-  // 1. Weather
-  html += `<div class="group-title"><span>1 · Weather (METAR / TAF)</span><button class="btn small" data-act="wx">Refresh</button></div><div class="group">`;
-  if (wxState.loading) html += '<div class="empty">Loading METAR and TAF…</div>';
-  else if (wxState.err) html += `<div class="empty">Weather unavailable (${esc(wxState.err)}). Check <a href="https://ama.aemet.es/en" target="_blank" rel="noopener">AEMET</a>.</div>`;
-  else if (!dep) html += '<div class="empty">Add aerodromes to the route.</div>';
-  const shown = new Set();
+  issues.sort((x, y) => order[x.level] - order[y.level]);
+  // 1. weather per aerodrome
+  const wx = [], shown = new Set();
   for (const [ad, t, role] of [[dep, to, dep && dest && dep.icao === dest.icao ? 'Departure & return' : 'Departure'], [dest, ldg, 'Destination'], [alt, altArr, 'Alternate']]) {
-    if (!ad || !wxState.data || shown.has(ad.icao)) continue;
+    if (!ad || shown.has(ad.icao)) continue;
     shown.add(ad.icao);
-    const w = wxState.data[ad.icao] || {};
-    const ft = fleetType(f.type);
+    const w = (wxState.data && wxState.data[ad.icao]) || {};
     const a = assess(ad.icao, w, t, t, { solo: f.solo, xwLimit: ft.xwind ? (f.solo ? ft.xwind.solo ?? ft.xwind.fi : ft.xwind.fi) : null, hwLimit: ft.headwind ? (f.solo ? ft.headwind.solo : ft.headwind.fi) : null });
     const st = a.issues.some((i) => i.level === 'bad') ? ['bad', 'BELOW MINIMA'] : a.issues.some((i) => i.level === 'warn') ? ['warn', 'CHECK'] : (w.metar || w.taf) ? ['ok', 'OK'] : ['muted', 'NO DATA'];
-    html += `<div class="wx"><div class="wx-head"><b>${ad.icao}</b><span class="label">${role} · ${hhmmZ(t)} ±1 h</span><span class="badge ${st[0]}">${st[1]}</span></div>
-      ${w.metar ? `<div class="label" style="font-size:12px">${esc(metarSummary(w.metar))}${a.xw ? ` · best RWY ${a.xw.rwy}: crosswind ${a.xw.xw} kt` : ''}</div><div class="mono">${esc(w.metar.rawOb)}</div>` : '<div class="label">No METAR</div>'}
-      ${w.taf ? `<div class="mono" style="margin-top:4px">${esc(w.taf.rawTAF)}</div>` : ''}</div>`;
+    wx.push({ ad, t, role, w, a, st });
   }
-  html += `</div><p class="note">Limits ${f.solo ? 'solo: visibility 7000 m, ceiling 2500 ft' : 'with FI: visibility 5000 m, ceiling 1500 ft'} BKN/OVC, ±1 h of your time there; crosswind ${fleetType(f.type).xwind ? `${f.solo ? fleetType(f.type).xwind.solo ?? fleetType(f.type).xwind.fi : fleetType(f.type).xwind.fi} kt` : 'per aircraft SOP'}${fleetType(f.type).headwind ? `, headwind ${f.solo ? fleetType(f.type).headwind.solo : fleetType(f.type).headwind.fi} kt` : ''}${fleetType(f.type).gustNote ? ` (${fleetType(f.type).gustNote})` : ''}. Also brief surface pressure charts, SIGWX and wind charts (SOP briefing order). Source: aviationweather.gov.</p>`;
-
+  const limits = `Limits ${f.solo ? 'solo: visibility 7000 m, ceiling 2500 ft' : 'with FI: visibility 5000 m, ceiling 1500 ft'} BKN/OVC, ±1 h of your time there; crosswind ${ft.xwind ? `${f.solo ? ft.xwind.solo ?? ft.xwind.fi : ft.xwind.fi} kt` : 'per aircraft SOP'}${ft.headwind ? `, headwind ${f.solo ? ft.headwind.solo : ft.headwind.fi} kt` : ''}${ft.gustNote ? ` (${ft.gustNote})` : ''}.`;
   // 2. NOTAMs
-  const notamAds = [dep, dest, alt].filter(Boolean).map((a) => a.icao).filter((x, i, arr) => arr.indexOf(x) === i);
-  html += `<div class="group-title"><span>2 · NOTAMs</span></div><div class="group">
-    <div class="row"><span class="grow">Aerodromes: ${notamAds.join(', ') || '—'} — check every alternate individually</span><a class="btn small" href="https://notampib.enaire.es/icaro" target="_blank" rel="noopener">ICARO ↗</a></div>
-    <div class="row"><span class="grow">En-route NOTAMs (Phase 3 manual)</span><a class="btn small" href="https://insigniavfr.enaire.es" target="_blank" rel="noopener">Insignia VFR ↗</a></div>`;
-  html += '</div>';
-
+  const notamAds = [dep, dest, alt].filter(Boolean).map((x) => x.icao).filter((x, i, arr) => arr.indexOf(x) === i);
   // 3. ATC flight plan
   const tas = result.main.rows.find((r) => r.phase === 'cruise')?.tas || 100;
   const night = (() => { const s2 = sunTimes(to, (dep || LEBG).lat, (dep || LEBG).lon); return s2.set && ldg > s2.set; })();
   const endMin = Math.floor(((+f.fob || 0) / planSop().ffCruise) * 60);
   const fpl = dep && dest ? buildFpl({
-    callsign: f.callsign, reg: f.reg, acType: fleetType(f.type).icao, dep: dep.icao, dest: dest.icao,
+    callsign: f.callsign, reg: f.reg, acType: ft.icao, dep: dep.icao, dest: dest.icao,
     alts: [alt?.icao].filter(Boolean), eobt: new Date(to.getTime() - 10 * 60e3), tas,
     wps: state.main.waypoints.map((w) => ({ ...w, fplName: w.ref && POINTS.find((p) => p.key === w.ref)?.type === 'ad' ? w.ref : null })),
     eetMin: Math.round(result.main.totals.timeSec / 60), night,
     dof: `${String(to.getUTCFullYear()).slice(2)}${String(to.getUTCMonth() + 1).padStart(2, '0')}${String(to.getUTCDate()).padStart(2, '0')}`,
     endurance: `${String(Math.floor(endMin / 60)).padStart(2, '0')}${String(endMin % 60).padStart(2, '0')}`, pob: f.pob,
   }) : '';
-  html += `<div class="group-title"><span>3 · ATC flight plan (draft)</span></div><div class="group">${fpl ? `<div class="wx mono" id="fplText">${esc(fpl)}</div>${copyBtn('fplText')}` : '<div class="empty">Plan a route between two aerodromes.</div>'}</div>
-    <p class="note">EOBT is set 10 min before takeoff. Check equipment, endurance and persons on board before filing.</p>`;
-
-  // 4. Mission: departure / arrival briefing, alternate, charts
+  // 4. mission objective
   const wps = state.main.waypoints;
   const depPts = wps.filter((w) => w.proc === 'dep');
   const exitW = depPts[depPts.length - 1];
@@ -1377,24 +1357,64 @@ function renderBriefing() {
   const entryW = entryIdx >= 0 ? wps[entryIdx] : wps[wps.length - 2];
   const depText = departureBriefing({ dep: dep?.icao, exitPoint: exitW?.name, procAlt: parseAlt(exitW?.alt), cruiseAlt: parseAlt(firstEnroute?.alt), firstMh: firstEnroute?.mh, next: firstEnroute?.to, procRoute: depPts.map((w) => w.name) });
   const arrText = arrivalBriefing({ dest: dest?.icao, entryPoint: entryW?.name, procAlt: parseAlt(arrPts[0]?.alt ?? entryW?.alt), procRoute: [entryW?.name, ...arrPts.map((w) => w.name)].filter(Boolean), pattern: dest?.icao === 'LEBG' ? 'joining the north circuit at 4000 ft' : dest?.icao === 'LERJ' ? 'circuit 3000 ft' : '' });
+  const chartAds = [dep, dest, alt].filter(Boolean).filter((x, i, arr) => arr.findIndex((y) => y.icao === x.icao) === i);
+  // 7. TEM
+  const crossings = airspaceCrossings(routeLegs('main'), AIRSPACES);
+  const threats = temThreats({ ads: [dep, dest, alt].filter(Boolean).map((x) => x.icao), crossings, solo: f.solo, night, mountains: (terrainData || []).some((t) => t.corridor > 4500), hot: wxState.data && dep && (wxState.data[dep.icao]?.metar?.temp ?? 0) > 30 });
+  return { dep, dest, alt, to, ldg, issues, wx, limits, notamAds, fpl, depText, arrText, chartAds, freq: headerFor('main').freq, mb: result.mb, perf: perfResults(), threats, fuel: result.fuel };
+}
+
+function renderBriefing() {
+  loadWeather();
+  const B = briefingData();
+  const { dep, issues, wx, notamAds, fpl, depText, arrText, chartAds, threats } = B;
+  const bad = issues.filter((i) => i.level === 'bad').length, warn = issues.filter((i) => i.level === 'warn').length;
+  let html = `<button class="btn primary wide" data-act="briefPdf">Download briefing (PDF)${state.mission ? ' · whole mission' : ''}</button>`;
+  html += `<div class="group-title"><span>Go / no-go · ${bad ? `<span class="badge bad">${bad} no-go</span>` : '<span class="badge ok">no blockers</span>'} ${warn ? `<span class="badge warn">${warn} to check</span>` : ''}</span></div>`;
+  html += issues.length
+    ? `<ul class="issues">${issues.map((i) => `<li class="${i.level}"><span class="ic">${i.level === 'bad' ? '✕' : i.level === 'warn' ? '!' : 'i'}</span><span>${esc(i.text)}</span></li>`).join('')}</ul>`
+    : `<div class="group"><div class="empty">${result.main.rows.length ? 'No issues found. The final decision stays with you and your instructor.' : 'Plan a route to see the checks.'}</div></div>`;
+
+  // 1. Weather
+  html += `<div class="group-title"><span>1 · Weather (METAR / TAF)</span><button class="btn small" data-act="wx">Refresh</button></div><div class="group">`;
+  if (wxState.loading) html += '<div class="empty">Loading METAR and TAF…</div>';
+  else if (wxState.err) html += `<div class="empty">Weather unavailable (${esc(wxState.err)}). Check <a href="https://ama.aemet.es/en" target="_blank" rel="noopener">AEMET</a>.</div>`;
+  else if (!dep) html += '<div class="empty">Add aerodromes to the route.</div>';
+  if (wxState.data) for (const { ad, t, role, w, a, st } of wx) {
+    html += `<div class="wx"><div class="wx-head"><b>${ad.icao}</b><span class="label">${role} · ${hhmmZ(t)} ±1 h</span><span class="badge ${st[0]}">${st[1]}</span></div>
+      ${w.metar ? `<div class="label" style="font-size:12px">${esc(metarSummary(w.metar))}${a.xw ? ` · best RWY ${a.xw.rwy}: crosswind ${a.xw.xw} kt` : ''}</div><div class="mono">${esc(w.metar.rawOb)}</div>` : '<div class="label">No METAR</div>'}
+      ${w.taf ? `<div class="mono" style="margin-top:4px">${esc(w.taf.rawTAF)}</div>` : ''}</div>`;
+  }
+  html += `</div><p class="note">${esc(B.limits)} Also brief surface pressure charts, SIGWX and wind charts (SOP briefing order). Source: aviationweather.gov.</p>`;
+
+  // 2. NOTAMs
+  html += `<div class="group-title"><span>2 · NOTAMs</span></div><div class="group">
+    <div class="row"><span class="grow">Aerodromes: ${notamAds.join(', ') || '—'} — check every alternate individually</span><a class="btn small" href="https://notampib.enaire.es/icaro" target="_blank" rel="noopener">ICARO ↗</a></div>
+    <div class="row"><span class="grow">En-route NOTAMs (Phase 3 manual)</span><a class="btn small" href="https://insigniavfr.enaire.es" target="_blank" rel="noopener">Insignia VFR ↗</a></div>
+    <div class="row wrap"><label class="field full"><span>NOTAM bulletin code / relevant NOTAMs (printed on the M&amp;B and the briefing)</span><input data-mb="notams" value="${esc(state.mb.notams)}" placeholder="e.g. bulletin code, RWY works…"></label></div>
+  </div>`;
+
+  // 3. ATC flight plan
+  html += `<div class="group-title"><span>3 · ATC flight plan (draft)</span></div><div class="group">${fpl ? `<div class="wx mono" id="fplText">${esc(fpl)}</div>${copyBtn('fplText')}` : '<div class="empty">Plan a route between two aerodromes.</div>'}</div>
+    <p class="note">EOBT is set 10 min before takeoff. Check equipment, endurance and persons on board before filing.</p>`;
+
+  // 4. Mission: departure / arrival briefing, alternate, charts
   html += `<div class="group-title"><span>4 · Mission objective</span></div><div class="group">
     <div class="wx"><div class="wx-head"><b>Departure briefing</b></div><div id="depBrief">${esc(depText) || '—'}</div></div>${depText ? copyBtn('depBrief') : ''}
     <div class="wx"><div class="wx-head"><b>Arrival briefing</b><span class="label">Phase 1 format</span></div><div id="arrBrief">${esc(arrText) || '—'}</div></div>${arrText ? copyBtn('arrBrief') : ''}
-    <div class="wx"><div class="wx-head"><b>Charts to have in sight</b></div>${[dep, dest, alt].filter(Boolean).filter((a, i, arr) => arr.findIndex((b) => b.icao === a.icao) === i).map((a) => `<a href="${a.vac}" target="_blank" rel="noopener">${a.icao} VAC ↗</a>`).join(' · ') || '—'} · ENAIRE 1:500 000 chart</div>
-    <div class="wx"><div class="wx-head"><b>Frequencies</b></div>${esc(headerFor('main').freq)}</div>
+    <div class="wx"><div class="wx-head"><b>Charts to have in sight</b></div>${chartAds.map((x) => `<a href="${x.vac}" target="_blank" rel="noopener">${x.icao} VAC ↗</a>`).join(' · ') || '—'} · ENAIRE 1:500 000 chart</div>
+    <div class="wx"><div class="wx-head"><b>Frequencies</b></div>${esc(B.freq)}</div>
   </div>`;
 
   // 5 & 6. Mass & balance and performance (details in the Mass & Balance view)
-  const mbr = result.mb;
+  const mbr = B.mb;
   html += `<div class="group-title"><span>5 · Mass &amp; balance · 6 · Performance</span><button class="btn small" data-act="toMb">Open</button></div><div class="group">
     <div class="row ${mbr ? (mbr.ok ? 'check-ok' : 'check-bad') : 'check-bad'}"><span class="grow">${mbr ? `T/O ${mbr.to.mass.toFixed(1)} ${mbr.ac.unit} · C.G. ${mbr.to.arm.toFixed(mbr.ac.armDp)} ${mbr.ac.armUnit}` : 'Mass &amp; balance not complete'}</span><span class="value">${mbr ? (mbr.ok ? 'IN LIMITS' : 'OUT') : '—'}</span></div>
-    ${perfResults().map(({ c, r }) => { const ph = r && !r.manual ? (c.role === 'dep' ? r.to : r.ldg) : null; return `<div class="row"><span class="grow">${c.role === 'dep' ? 'Take-off' : 'Landing'} ${c.ad.icao}</span><span class="value">${ph && !ph.manual ? `${ph.d50} ${r.unit} over 50 ft` : 'read the chart'}</span></div>`; }).join('')}
+    ${B.perf.map(({ c, r }) => { const ph = r && !r.manual ? (c.role === 'dep' ? r.to : r.ldg) : null; return `<div class="row"><span class="grow">${c.role === 'dep' ? 'Take-off' : 'Landing'} ${c.ad.icao}</span><span class="value">${ph && !ph.manual ? `${ph.d50} ${r.unit} over 50 ft` : 'read the chart'}</span></div>`; }).join('')}
   </div>`;
 
   // 7. TEM
-  const crossings = airspaceCrossings(routeLegs('main'), AIRSPACES);
-  const threats = temThreats({ ads: [dep, dest, alt].filter(Boolean).map((a) => a.icao), crossings, solo: f.solo, night, mountains: (terrainData || []).some((t) => t.corridor > 4500), hot: wxState.data && dep && (wxState.data[dep.icao]?.metar?.temp ?? 0) > 30 });
-  html += `<div class="group-title"><span>7 · Threat &amp; error management</span></div><div class="group">${threats.map((t, i) => `<label class="tem-row"><input type="checkbox" data-tem="${esc(t)}" ${state.tem[t] ? 'checked' : ''}><span>${esc(t)}</span></label>`).join('')}</div>`;
+  html += `<div class="group-title"><span>7 · Threat &amp; error management</span></div><div class="group">${threats.map((t) => `<label class="tem-row"><input type="checkbox" data-tem="${esc(t)}" ${state.tem[t] ? 'checked' : ''}><span>${esc(t)}</span></label>`).join('')}</div>`;
 
   // Unlocked aerodromes
   html += `<div class="group-title"><span>My unlocked aerodromes</span></div><div class="group"><div class="chips">${EASY_FIRST.map((ad) => `<label><input type="checkbox" data-unlock="${ad}" ${state.unlocked.includes(ad) ? 'checked' : ''}>${ad}</label>`).join('')}</div></div>
@@ -1411,10 +1431,12 @@ panels.brief.addEventListener('click', (e) => {
   }
   if (e.target.closest('[data-act=wx]')) loadWeather(true);
   if (e.target.closest('[data-act=toMb]')) document.querySelector('#modes [data-mode=mb]').click();
+  if (e.target.closest('[data-act=briefPdf]')) downloadBriefing();
 });
 panels.brief.addEventListener('change', (e) => {
   const t = e.target;
   if (t.dataset.tem) { state.tem[t.dataset.tem] = t.checked; scheduleSave(); }
+  if (t.dataset.mb) { state.mb[t.dataset.mb] = t.value; scheduleSave(); }
   if (t.dataset.unlock) {
     const ad = t.dataset.unlock;
     state.unlocked = t.checked ? [...new Set([...state.unlocked, ad])] : state.unlocked.filter((x) => x !== ad);
@@ -1969,7 +1991,7 @@ function renderMission() {
   }
   const figs = missionFigures();
   const names = { local: 'Local navigation', xc: 'Cross-country', tri: 'Triangular' };
-  let html = `<div class="group-title"><span>${names[m.type]}</span><button class="btn small primary" data-act="msPdf">Download all (PDF)</button></div><div class="group">`;
+  let html = `<div class="group-title"><span>${names[m.type]}</span><button class="btn small primary" data-act="msPdf">Download all (briefing + navlogs + M&amp;B)</button></div><div class="group">`;
   for (const leg of m.legs) {
     const f = figs.get(leg.id), i = legChainIndex(leg);
     const planned = (leg.main.waypoints || []).length >= 3;
@@ -2041,7 +2063,7 @@ panels.mission.addEventListener('click', async (e) => {
     if (state.mission && !confirm('Replace the current mission? Its legs will be lost (save it under Plans first if needed).')) return;
     return createMission(v('#msType'), { base: v('#msBase'), dest: v('#msDest'), reserve: v('#msRes'), a1: v('#msA1'), a2: v('#msA2'), b1: v('#msB1'), b2: v('#msB2') });
   }
-  if (e.target.closest('[data-act=msPdf]')) return downloadMission();
+  if (e.target.closest('[data-act=msPdf]')) return downloadBriefing();
 });
 panels.mission.addEventListener('change', (e) => {
   const r = e.target.dataset.refuel;
@@ -2087,6 +2109,77 @@ async function downloadMission() {
     saveBlob(await out.save(), `Mission_${names[m.type]}_${flightTime().toISOString().slice(0, 10)}.pdf`);
     toast('Mission PDF ready');
   } catch (err) { console.error(err); toast('Could not build the mission PDF: ' + err.message); }
+}
+
+/* ---------------- One download: briefing + navlogs + M&B (Briefing List) ---------------- */
+
+function legPack(fob) {
+  // Everything for the flight currently loaded in the planner (real or swapped-in leg).
+  const B = briefingData();
+  const f = state.flight, t = flightTime();
+  const tot = result.main.totals;
+  const meta = {
+    title: `Briefing · ${B.dep?.icao || '?'} -> ${B.dest?.icao || '?'} · ${t.toLocaleDateString('en-GB')} · ${f.callsign || ''}`,
+    flightLine: `${f.callsign || 'Callsign —'} · ${fleetType(f.type).name} ${f.reg || ''} · T/O ${zl(t)} · LDG ${zl(B.ldg)} · ${tot.dist} NM · ${fmtHMS(tot.timeSec)} · trip ${tot.trip} L · FOB ${fob ?? f.fob} L${f.solo ? ' · SOLO' : ''}`,
+    notams: state.mb.notams, rows: result.main.rows, tem: state.tem, zl, metarSummary, mmss: fmtMMSS,
+    totals: `${tot.dist} NM · ${fmtHMS(tot.timeSec)} · ${tot.trip} L`,
+  };
+  const sheets = [{ header: headerFor('main'), rows: result.main.rows }];
+  if (result.alt.rows.length) sheets.push({ header: headerFor('alt'), rows: result.alt.rows });
+  const mbArgs = result.mb ? [result.mb, { date: t.toLocaleDateString('en-GB'), reg: f.reg, studentCode: state.mb.studentCode, weather: f.weather, notams: state.mb.notams, perf: B.perf }] : null;
+  return { B, meta, sheets: result.main.rows.length ? sheets : null, mbArgs };
+}
+
+async function downloadBriefing() {
+  const { PDFDocument } = window.PDFLib;
+  syncActiveLeg();
+  const m = state.mission;
+  toast(m ? 'Building the mission briefing…' : 'Building the briefing…');
+  // weather for every aerodrome of the flight(s), not only the open route
+  const ads = new Set();
+  const collect = () => [endpoint('main', 0), endpoint('main', -1), endpoint('alt', -1)].filter(Boolean).forEach((a) => ads.add(a.icao));
+  if (m) { const figs0 = missionFigures(); m.legs.forEach((l) => withLeg(l, figs0.get(l.id).fob, collect)); } else collect();
+  const keepWx = wxState;
+  try {
+    const extra = await fetchWeather([...ads]).catch(() => null);
+    if (extra) wxState = { ...wxState, data: { ...(wxState.data || {}), ...extra } };
+    const out = await PDFDocument.create();
+    const F = await pdfFonts(out);
+    const add = async (bytes) => { const d = await PDFDocument.load(bytes); (await out.copyPages(d, d.getPageIndices())).forEach((p) => out.addPage(p)); };
+    const packs = [];
+    if (m) {
+      const figs = missionFigures();
+      const names = { local: 'Local navigation', xc: 'Cross-country', tri: 'Triangular' };
+      addMissionCover(out, F, {
+        title: `Mission briefing · ${names[m.type]}`,
+        lines: [`${names[m.type]} · ${state.flight.callsign || ''} · ${fleetType(state.flight.type).name} ${state.flight.reg || ''}`, `${flightTime().toLocaleDateString('en-GB')} · student ${state.mb.studentCode || '—'}`],
+        legs: m.legs.map((l) => { const f = figs.get(l.id); const ok = f.fuelOk && f.mbOk !== false && !f.issues.length && l.main.waypoints.length >= 3;
+          return { label: l.label, ok, status: ok ? 'OK' : 'CHECK', detail: `${f.dep?.icao || '?'} -> ${f.dest?.icao || '?'}${f.alt ? ` (alt ${f.alt.icao})` : ''} · ${f.dist} NM · T/O ${zl(f.t)} · LDG ${zl(f.ldg)} · FOB ${f.fob.toFixed(1)} L · trip ${f.trip.toFixed(1)} L · minimum ${f.required} L${f.issues.length ? ' · ' + f.issues.join('; ') : ''}` }; }),
+        checks: missionChecks(figs),
+      });
+      const mbDone = new Set();
+      for (const l of m.legs) {
+        const f = figs.get(l.id);
+        const p = withLeg(l, f.fob, () => legPack(f.fob));
+        p.withMb = !mbDone.has(m.type === 'local' ? 'local' : l.id);
+        mbDone.add(m.type === 'local' ? 'local' : l.id);
+        packs.push(p);
+      }
+    } else {
+      const p = legPack(); p.withMb = true; packs.push(p);
+    }
+    for (const p of packs) {
+      addBriefingPages(out, F, p.B, p.meta);
+      if (p.sheets) await add(await buildNavlogPdf(p.sheets));
+      if (p.withMb && p.mbArgs) await add(await buildMbPdf(...p.mbArgs));
+    }
+    embedPlan(out, planData());
+    out.setTitle(m ? 'Mission briefing' : 'Flight briefing');
+    const d = flightTime().toISOString().slice(0, 10);
+    saveBlob(await out.save(), m ? `Briefing_Mission_${d}.pdf` : `Briefing_${endpoint('main', 0)?.icao || ''}-${endpoint('main', -1)?.icao || ''}_${d}.pdf`);
+    toast('Briefing PDF ready');
+  } catch (err) { console.error(err); toast('Could not build the briefing: ' + err.message); }
+  finally { wxState = keepWx; }
 }
 
 /* ---------------- Boot ---------------- */
