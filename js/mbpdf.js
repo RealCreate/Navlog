@@ -306,18 +306,22 @@ function ps28Trace(page, m, { font, bold, blue, red, rgb }) {
   page.drawText('EMPTY', { x: 288, y: y + 3, size: 5.5, font: bold, color: orange });
   const strips = [['pilot', 284.5, 271.8], ['copilot', 269.0, 256.2], ['baggage', 253.2, 240.5], ['baggage2', 237.8, 225.0], ['fuel', 222.0, 209.2]];
   let prevX = 284.5, zf = null;
+  // As in the SOP: across at constant index to the middle of each item strip, then straight
+  // along the middle of the strip to the new index.
   for (const [id, xr, xl] of strips) {
-    if (id === 'fuel') zf = { mass, moment, x: xr, y };
-    line({ x: prevX, y }, { x: xr, y });
+    const mid = (xr + xl) / 2;
+    line({ x: prevX, y }, { x: mid, y });
+    if (id === 'fuel') zf = { mass, moment, x: mid, y };
     const r = row(id);
     mass += r.mass; moment += r.moment;
     const y2 = Y(mass, moment);
-    line({ x: xr, y }, { x: xl, y: y2 }, 1.2);
-    y = y2; prevX = xl;
+    line({ x: mid, y }, { x: mid, y: y2 }, 1.2);
+    y = y2; prevX = mid;
   }
-  // take-off: across to the take-off mass
+  // take-off: across to the chart edge, then to the take-off mass
   const to = { x: X(m.to.mass), y: Y(m.to.mass, m.to.moment) };
-  line({ x: prevX, y }, to, 1.2);
+  line({ x: prevX, y }, { x: 209.2, y });
+  line({ x: 209.2, y }, to, 1.2);
   page.drawCircle({ x: to.x, y: to.y, size: 3.2, color: m.to.cgOk && m.to.massOk ? blue : red });
   page.drawText('T/O', { x: to.x - 18, y: to.y + 3, size: 7, font: bold, color: blue });
   // zero fuel: from before the fuel strip across to the zero-fuel mass
