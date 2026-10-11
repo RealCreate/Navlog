@@ -179,6 +179,15 @@ async function initBase() {
     const r = await fetch('tiles/meta.json', { cache: 'no-cache' });
     if (!r.ok) throw new Error();
     chartMeta = await r.json();
+    // New chart build (new sheets / AIRAC edition): drop the tiles cached from the old one so the
+    // sheets show as one combined chart everywhere, not old pieces where they were viewed before.
+    const build = `${chartMeta.built}|${(chartMeta.charts || []).join(',')}`;
+    let seen = null; try { seen = localStorage.getItem('navlog.tilesBuild'); } catch { /* private mode */ }
+    if (seen !== build && 'caches' in window) {
+      await caches.delete('navlog-tiles-v1').catch(() => {});
+      try { localStorage.setItem('navlog.tilesBuild', build); } catch { /* ignore */ }
+      vfrLayer.redraw();
+    }
     if (chartMeta.bounds) vfrLayer.options.bounds = L.latLngBounds(chartMeta.bounds);
     document.getElementById('chartInfo').textContent = `AIP España · ENAIRE · ${chartMeta.charts.join(', ')}`;
   } catch {
