@@ -914,7 +914,7 @@ function selectWaypoint(id, scroll) {
 function headerFor(key) {
   const f = state.flight;
   const t = flightTime();
-  const date = `${t.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' })} T/O ${zl(t)}`;
+  const date = t.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' }); // date only (the T/O time is not part of the date box)
   const mainDep = endpoint('main', 0), mainDest = endpoint('main', -1), altDest = endpoint('alt', -1);
   const fp = result.fuel;
   const mb = result.mb;
