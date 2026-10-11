@@ -1,5 +1,5 @@
 import { AERODROMES, POINTS, FLEET_TYPES, fleetType, SOP, adByIcao, mergeAip, procedureFor, PROCEDURES } from './data.js';
-import { computeNavlog, stdFlags, fuelPolicy, fmtMMSS, fmtHMS, fmtVar, fmtAlt, parseAlt, cruiseTas, distanceNm, midpoint } from './nav.js';
+import { computeNavlog, stdFlags, fuelPolicy, fmtMMSS, fmtHMS, fmtVar, fmtAlt, parseAlt, cruiseTas, distanceNm, midpoint, trueCourse } from './nav.js';
 import { buildNavlogPdf, buildMbPdf } from './pdf.js';
 import { addBriefingPages, addMissionCover, fonts as pdfFonts, pdfText } from './briefpdf.js';
 import { renderRouteMap, addMapPage } from './mapprint.js';
@@ -325,7 +325,8 @@ function newWaypoint(lat, lon, ref) {
     name: ref ? refName(ref) : `WPT ${r.waypoints.length}`,
     ref: ref && ref.type !== 'town' ? ref.key : null,
     town: ref && ref.type === 'town' ? ref.label : undefined,
-    alt: lastCruiseAlt(r.waypoints),
+    // en-route point: 5500 ft southbound, 6500 ft northbound (Spain) — lower it in the profile if terrain allows
+    alt: prev ? (southbound(((Math.round(trueCourse(prev, { lat, lon }) - (prev.var || 0)) % 360) + 360) % 360) ? 5500 : 6500) : lastCruiseAlt(r.waypoints),
     wdir: prev ? prev.wdir || '' : '', wspd: prev ? prev.wspd || '' : '',
     var: ref && ref.ad ? adByIcao(ref.ad).var : defaultVar(lat, lon),
   };
@@ -728,15 +729,18 @@ function soloEntryIssue() {
   return null;
 }
 
-// SERA.5005: above 3000 ft AGL, magnetic track 000–179° → odd thousands + 500 ft, 180–359° → even + 500 ft.
+// Cruising levels, Spain (SERA Appendix 3 as applied in Spain, Italy and Portugal): magnetic track
+// 090–269° (southbound) → odd thousands + 500 ft; 270–089° (northbound) → even thousands + 500 ft.
+// Applies above 3000 ft AGL.
+const southbound = (mc) => mc >= 90 && mc < 270;
 function semicircularHint(mc, alt) {
   if (alt == null || alt < 3000) return null;
-  const odd = mc < 180;
+  const odd = southbound(mc);
   const ok = alt % 1000 === 500 && (Math.floor(alt / 1000) % 2 === 1) === odd;
   if (ok) return null;
   const base = Math.floor(alt / 1000);
   const cands = [base - 1, base, base + 1].filter((t) => (t % 2 === 1) === odd && t >= 2).map((t) => t * 1000 + 500);
-  return `Cruising level for MC ${String(mc).padStart(3, '0')}°: ${cands.slice(0, 2).join(' / ')} ft (SERA, above 3000 ft AGL)`;
+  return `Cruising level for MC ${String(mc).padStart(3, '0')}°: ${cands.slice(0, 2).join(' / ')} ft (Spain: southbound odd, northbound even, above 3000 ft AGL)`;
 }
 
 // Phase 2 manual, company alternate policy: LEBG ↔ LERJ.
