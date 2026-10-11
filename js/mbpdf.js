@@ -10,7 +10,7 @@ import { PA28_CHART } from './perf.js';
 // baggage2, zfw, fuel, ramp, taxi, to, trip, ldg. Each row: [yCentre, halfHeight].
 const FORMS = {
   P2008: {
-    file: 'assets/mb/P2008.pdf', size: 10,
+    file: 'assets/mb/P2008.pdf', size: 10, signature: true,
     header: { page: 0, date: [35, 166, 150, 174], reg: [167, 297, 150, 174], student: [298, 429, 150, 174], weather: [98, 560, 197, 249], notams: [98, 560, 249, 300] },
     table: {
       page: 0, w: [167, 297], a: [298, 429], m: [429, 560],
@@ -19,7 +19,7 @@ const FORMS = {
     },
   },
   PMENTOR: {
-    file: 'assets/mb/PMENTOR.pdf', size: 9.5,
+    file: 'assets/mb/PMENTOR.pdf', size: 9.5, signature: true,
     header: { page: 0, date: [36, 166, 117, 146], reg: [166, 297, 117, 146], student: [297, 428, 117, 146], weather: [95, 560, 157, 182], notams: [95, 560, 185, 210] },
     table: {
       page: 0, w: [166, 297], a: [297, 428], m: [428, 560],
@@ -63,7 +63,7 @@ const FORMS = {
     loadGraph: { page: 2, x0: 146.7, kx: 9.72 / 1000, y0: 329.3, ky: 0.4867, items: ['front', 'pax', 'fuel', 'baggage', 'baggage2'] },
   },
   C172RG: {
-    file: 'assets/mb/C172RG.pdf', size: 7.5,
+    file: 'assets/mb/C172RG.pdf', size: 7.5, signatureBox: [405, 510, 108, 132],
     table: {
       page: 2, w: [402, 447], m: [447, 492],
       rows: { empty: [163, 7], fuel: [179, 6], front: [211.5, 6], pax: [223, 6], baggage: [236, 6], baggage2: [248, 6], ramp: [267, 8], taxi: [283.5, 8], to: [307, 9] },
@@ -94,7 +94,7 @@ const FORMS = {
     chart: { page: 1, x: 'mass', y: 'moment', xs: [790, 459.8, 1290, 146.4], ys: [175, 642.7, 325, 472.8], gx: 669.8, gy: 460.0 },
   },
   P2006NG: {
-    file: 'assets/mb/P2006NG.pdf', size: 9,
+    file: 'assets/mb/P2006NG.pdf', size: 9, signature: true,
     header: { page: 0, date: [34, 166, 108, 132], reg: [166, 297, 108, 132], student: [297, 428, 108, 132], weather: [97, 560, 158, 207], notams: [97, 560, 207, 263] },
     table: {
       page: 0, w: [223, 313], a: [313, 419], m: [419, 558],
@@ -171,6 +171,17 @@ export async function buildMbFormPdf(m, meta, plan) {
     if (h.date) cell(p, meta.date, h.date, (h.date[2] + h.date[3]) / 2);
     if (h.reg) cell(p, meta.reg, h.reg, (h.reg[2] + h.reg[3]) / 2, bold);
     if (h.student) cell(p, meta.studentCode, h.student, (h.student[2] + h.student[3]) / 2);
+    // signature (Settings) in the box right of the student code, on the sheets that have one
+    const sigBox = form.signatureBox || (h.student && form.signature ? [h.student[1], h.student[1] + (h.student[1] - h.student[0]), h.student[2], h.student[3]] : null);
+    if (sigBox && meta.signature && meta.signature.startsWith('data:image/png')) {
+      try {
+        const img = await doc.embedPng(meta.signature);
+        const [x0, x1, yT, yB] = sigBox;
+        const bw = x1 - x0 - 8, bh = yB - yT - 3, k = Math.min(bw / img.width, bh / img.height);
+        const Hs = topOf(p);
+        p.drawImage(img, { x: x0 + (x1 - x0 - img.width * k) / 2, y: Hs - yB + 1.5, width: img.width * k, height: img.height * k });
+      } catch { /* bad image: leave the box empty */ }
+    }
     if (h.weather) para(p, meta.weather, h.weather);
     if (h.notams) para(p, meta.notams, h.notams);
     const H = topOf(p);

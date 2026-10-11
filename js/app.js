@@ -37,7 +37,9 @@ const defaultState = () => ({
   windSource: null,
   planId: null,
   mb: { studentCode: '', notams: '', tripSource: 'route', tripManual: '', altManual: '' },
-  mode: 'plan',
+  // personal settings (Settings): name, signature, callsigns
+  settings: { name: '', signature: '', callsign: '', soloOut: '', soloIn: '' },
+  mode: 'mission', // new users start at step 1
 });
 
 let uid = Date.now();
@@ -51,7 +53,7 @@ function adWaypoint(ad) {
 function load() {
   try {
     const s = JSON.parse(localStorage.getItem(STORE));
-    if (s && s.main) { const d = defaultState(); return { ...d, ...s, flight: { ...d.flight, ...s.flight }, view: { ...d.view, ...s.view }, mb: { ...d.mb, ...s.mb }, unlocked: s.unlocked || d.unlocked, tem: s.tem || {} }; }
+    if (s && s.main) { const d = defaultState(); return { ...d, ...s, flight: { ...d.flight, ...s.flight }, view: { ...d.view, ...s.view }, mb: { ...d.mb, ...s.mb }, settings: { ...d.settings, ...s.settings }, unlocked: s.unlocked || d.unlocked, tem: s.tem || {} }; }
   } catch { /* first run or storage blocked */ }
   return defaultState();
 }
@@ -326,6 +328,7 @@ function newWaypoint(lat, lon, ref) {
     ref: ref && ref.type !== 'town' ? ref.key : null,
     town: ref && ref.type === 'town' ? ref.label : undefined,
     // en-route point: 5500 ft southbound, 6500 ft northbound (Spain) — lower it in the profile if terrain allows
+    altAuto: !!prev, // default level — lowered/raised automatically once the terrain is known
     alt: prev ? (southbound(((Math.round(trueCourse(prev, { lat, lon }) - (prev.var || 0)) % 360) + 360) % 360) ? 5500 : 6500) : lastCruiseAlt(r.waypoints),
     wdir: prev ? prev.wdir || '' : '', wspd: prev ? prev.wspd || '' : '',
     var: ref && ref.ad ? adByIcao(ref.ad).var : defaultVar(lat, lon),
@@ -607,12 +610,12 @@ function drawLegAnnotations(key, rows, wps, isAlt) {
       const to = (+b.wdir + 180) % 360;
       L.marker(pos, { pane: 'marks', interactive: false, icon: L.divIcon({ className: '', iconSize: [0, 0], html: `<div class="wind-arrow" style="--r:${to}deg"><svg viewBox="0 0 24 24"><path d="M12 3v18M6 15l6 6 6-6"/></svg><span>${String(b.wdir).padStart(3, '0')}/${b.wspd}</span></div>` }) }).addTo(routeLayer);
     }
-    // HAT on the leg: Heading · Altitude · Time
-    if (z < 10) continue;
+    // HAT on the leg, numbered: Heading · Altitude · Time (alternate legs A1, A2…)
+    if (z < 9) continue;
     const ete = legRows.reduce((t, r) => t + r.eteSec, 0);
     L.marker(lerp(a, b, 0.5), {
       pane: 'marks', interactive: false,
-      icon: L.divIcon({ className: '', iconSize: [0, 0], html: `<span class="hat ${isAlt ? 'alt' : ''}">${String(last.mh).padStart(3, '0')}° · ${last.altDisp || fmtAlt(last.alt, last.altLabel)} · ${fmtMMSS(ete)}</span>` }),
+      icon: L.divIcon({ className: '', iconSize: [0, 0], html: `<span class="hat ${isAlt ? 'alt' : ''}"><b class="hn">${isAlt ? 'A' : ''}${i}</b><span class="hv">${String(last.mh).padStart(3, '0')}°</span><span class="hv">${last.altDisp || fmtAlt(last.alt, last.altLabel)}</span><span class="hv">${fmtMMSS(ete)}</span></span>` }),
     }).addTo(routeLayer);
   }
 }
@@ -679,14 +682,38 @@ let tab = 'route';
 const wideMQ = matchMedia('(min-width: 900px)');
 const isWide = () => wideMQ.matches;
 
+const MODES = ['mission', 'plan', 'mb', 'brief', 'settings'];
 function showPanels() {
+  if (!MODES.includes(state.mode)) state.mode = 'plan';
+  if (tab === 'brief') tab = 'route';
   const key = state.mode === 'plan' ? tab : state.mode;
   Object.entries(panels).forEach(([k, p]) => { p.hidden = k !== key; });
   document.getElementById('summary').hidden = state.mode !== 'plan';
   document.getElementById('mbSummary').hidden = state.mode !== 'mb';
   document.getElementById('planTabs').hidden = state.mode !== 'plan';
-  document.querySelectorAll('#modes button').forEach((x) => x.classList.toggle('on', x.dataset.mode === state.mode));
+  document.getElementById('planBar').hidden = state.mode !== 'plan';
+  document.getElementById('sheet').dataset.mode = state.mode;
+  document.querySelectorAll('.modebar [data-mode]').forEach((x) => x.classList.toggle('on', x.dataset.mode === state.mode));
   document.querySelectorAll('#tabs button').forEach((x) => x.classList.toggle('on', x.dataset.tab === tab));
+  stepStatus();
+}
+// Step bar: a tick on the steps that are done (mission chosen, route planned, M&B in limits).
+function stepStatus() {
+  if (!result) return;
+  const done = {
+    mission: !!state.mission || state.missionSkipped,
+    plan: result.main.rows.length > 0 && (state.alt.waypoints.length > 1 || !!state.mission),
+    mb: !!(result.mb && result.mb.ok && +state.flight.pilot > 0),
+    brief: !!state.briefDone,
+  };
+  document.querySelectorAll('#modes [data-mode]').forEach((x) => x.classList.toggle('done', !!done[x.dataset.mode]));
+}
+function goStep(mode) {
+  state.mode = mode;
+  showPanels();
+  if (!isWide() && sheetDetent === 0) setDetent(1);
+  renderPanels(); scheduleSave();
+  document.getElementById('sheetBody').scrollTop = 0;
 }
 
 document.getElementById('tabs').addEventListener('click', (e) => {
@@ -696,12 +723,17 @@ document.getElementById('tabs').addEventListener('click', (e) => {
   if (!isWide() && sheetDetent === 0) setDetent(1);
   renderPanels();
 });
-document.getElementById('modes').addEventListener('click', (e) => {
-  const b = e.target.closest('button'); if (!b) return;
-  state.mode = b.dataset.mode;
-  showPanels();
-  if (!isWide() && sheetDetent === 0) setDetent(1);
-  renderPanels(); scheduleSave();
+document.querySelector('.modebar').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-mode]'); if (!b) return;
+  goStep(b.dataset.mode);
+});
+// "Next step" buttons at the end of each step
+document.getElementById('sheetBody').addEventListener('click', (e) => {
+  const ra = e.target.closest('[data-route-go]');
+  if (ra) { state.active = ra.dataset.routeGo; if (state.active === 'alt' && !state.alt.waypoints.length) seedAlternate(); update({ rerenderPanels: true }); document.getElementById('sheetBody').scrollTop = 0; return toast('Alternate: tap the chart from your destination to the alternate'); }
+  const b = e.target.closest('[data-goto]'); if (!b) return;
+  if (b.dataset.goto === 'plan' && !state.mission) state.missionSkipped = true;
+  goStep(b.dataset.goto);
 });
 wideMQ.addEventListener('change', () => {
   if (isWide() && tab === 'profile') tab = 'route';
@@ -857,6 +889,9 @@ function renderRoute() {
   html += `<p class="note">Winds marked “auto” are filled from the Open-Meteo forecast at each leg's altitude and time${state.windSource ? ` (fetched ${new Date(state.windSource.at).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })})` : ''}. The SOP's approved sources are <a href="https://www.windy.com" target="_blank" rel="noopener">windy.com</a> and <a href="https://ama.aemet.es/en" target="_blank" rel="noopener">ama.aemet.es</a> — check them on Windy (link on each leg); a wind you type is kept. Winds are true direction. VAR is east-positive (Burgos 1°E): MC = TC − VAR E. Drag the small dot in the middle of a leg to insert a waypoint; drag a waypoint to move it.</p>`;
   const ml = state.mission && state.mission.legs.find((l) => l.id === state.mission.active);
   if (ml) html = `<div class="group"><div class="row"><span class="grow">Mission leg: <b>${esc(ml.label)}</b>${state.mission.type === 'local' ? ' <small class="label">(alternate shared by both navlogs)</small>' : ''}</span><button class="btn small" data-act="toMission">Mission</button></div></div>` + html;
+  if (result.main.rows.length) html += state.active === 'main' && state.alt.waypoints.length < 2
+    ? `<button class="btn primary wide next-step" data-route-go="alt" style="--c: var(--alt)">Next · plan the alternate →</button>`
+    : `<button class="btn primary wide next-step" data-goto="mb" style="--c: var(--c-mb)">Next · 3 M&amp;B →</button>`;
   panels.route.innerHTML = html;
 }
 
@@ -874,6 +909,7 @@ panels.route.addEventListener('change', (e) => {
   if (f === 'var') v = v === '' ? '' : +v;
   if (f === 'alt') v = /^fl/i.test(v) ? v.toUpperCase().replace(/\s+/g, '') : (v === '' ? '' : parseAlt(v));
   w[f] = v;
+  if (f === 'alt') w.altAuto = false; // the student chose this level
   if (f === 'wdir' || f === 'wspd') w.windSrc = v === '' ? undefined : 'manual';
   update({ rerenderPanels: true });
 });
@@ -992,6 +1028,7 @@ function renderNavlog() {
   </div>
   <p class="note">Blue ETEs are SOP standard times (departure ${SOP.stdDepMin} min, arrival ${SOP.stdArrMin} min). TOC/TOD at ${SOP.roc} ft/min using GS; climb ${SOP.tasClimb} kt / ${planSop().ffClimb} L/h, descent ${SOP.tasDescent} kt / ${planSop().ffDescent} L/h, cruise IAS ${planSop().tasBase} kt + 2 kt/1000 ft, ${planSop().ffCruise} L/h (${esc(fleetType(state.flight.type).perf.src)}). ETA, ATE, ATA are filled in flight.</p>
   <button class="btn primary wide" data-act="pdf">Download navlog PDF</button>`;
+  if (result.main.rows.length) html += `<button class="btn primary wide next-step" data-goto="mb" style="--c: var(--c-mb)">Next · 3 M&amp;B →</button>`;
   panels.navlog.innerHTML = html;
 }
 panels.navlog.addEventListener('change', (e) => {
@@ -1038,6 +1075,7 @@ function renderFuel() {
     ${[['tasBase', 'Cruise IAS (kt)'], ['ffCruise', 'Cruise (L/h)'], ['ffClimb', 'Climb (L/h)'], ['ffDescent', 'Descent (L/h)']].map(([k, l]) => `<label class="field narrow"><span>${l}</span><input data-perf="${k}" inputmode="decimal" value="${planSop()[k]}"></label>`).join('')}
   </div><div class="row"><span class="grow label">${esc(fleetType(f.type).perf.src)}. Climb ${SOP.tasClimb} kt, descent ${SOP.tasDescent} kt, ${SOP.roc} ft/min (Phase 2 manual).</span></div></div>
   <p class="note">Fuel in litres, mass in kg (SOP 2511). Cross-country flights depart with full tanks within M&amp;B limits.</p>`;
+  if (result.main.rows.length) html += `<button class="btn primary wide next-step" data-goto="mb" style="--c: var(--c-mb)">Next · 3 M&amp;B →</button>`;
   panels.fuel.innerHTML = html;
 }
 panels.fuel.addEventListener('click', (e) => {
@@ -1203,6 +1241,7 @@ function renderMB() {
   </div></div>
   <button class="btn primary wide" data-act="mbpdf">Download M&amp;B sheet (PDF)</button>
   <p class="note">Arms, limits and envelope from the ${esc(ac.sheet)} (fleet M&amp;B overview, 19/07/2025). Fuel ${ac.unit === 'lb' ? '6 lb/US gal' : '0.72 kg/L'}. Masses are entered in kg${ac.unit === 'lb' ? ' and converted to lb (× 2.20462)' : ''}.</p>`;
+  html += `<button class="btn primary wide next-step" data-goto="brief" style="--c: var(--c-brief)">Next · 4 Briefing →</button>`;
   panels.mb.innerHTML = html;
 }
 panels.mb.addEventListener('change', (e) => {
@@ -1229,7 +1268,7 @@ async function downloadMbPdf() {
   if (!m) return toast('Choose a registration (or enter the empty mass) first.');
   try {
     const bytes = await buildMbPdf(m, {
-      date: flightTime().toLocaleDateString('en-GB'), reg: f.reg, studentCode: state.mb.studentCode,
+      date: flightTime().toLocaleDateString('en-GB'), reg: f.reg, studentCode: state.mb.studentCode, signature: state.settings.signature,
       weather: f.weather, notams: state.mb.notams, perf: perfResults(),
     }, planData());
     saveBlob(bytes, `MB_${f.reg || f.type}_${flightTime().toISOString().slice(0, 10)}.pdf`);
@@ -1250,13 +1289,14 @@ document.getElementById('btnMbPdf').addEventListener('click', downloadMbPdf);
 
 function renderPanels() {
   document.querySelectorAll('#routeSel button').forEach((b) => b.classList.toggle('on', b.dataset.route === state.active));
-  document.getElementById('routeSel').hidden = tab === 'fuel' || tab === 'brief';
+  document.getElementById('routeSel').hidden = tab === 'fuel';
   if (state.mode === 'mb') return renderMB();
   if (state.mode === 'mission') return renderMission();
+  if (state.mode === 'brief') return renderBriefing();
+  if (state.mode === 'settings') return renderSettings();
   if (tab === 'route') renderRoute();
   if (tab === 'navlog') renderNavlog();
   if (tab === 'fuel') renderFuel();
-  if (tab === 'brief') renderBriefing();
   if (tab === 'profile') renderProfile();
 }
 
@@ -1354,10 +1394,10 @@ async function loadWeather(force = false) {
   const key = ads.join(',');
   if (!key || (!force && wxState.key === key && (wxState.data || wxState.loading || wxState.err))) return;
   wxState = { key, data: null, err: null, loading: true };
-  if (tab === 'brief') renderBriefing();
+  if (state.mode === 'brief') renderBriefing();
   try { wxState.data = await fetchWeather(ads); } catch (e) { wxState.err = e.message; }
   wxState.loading = false;
-  if (tab === 'brief') renderBriefing();
+  if (state.mode === 'brief') renderBriefing();
   // refresh the performance figures, but never re-render under the student's typing
   if (state.mode === 'mb' && !panels.mb.contains(document.activeElement)) renderMB();
 }
@@ -1544,7 +1584,12 @@ function renderBriefing() {
   const B = briefingData();
   const { dep, issues, wx, notamAds, fpl, depText, arrText, chartAds, threats } = B;
   const bad = issues.filter((i) => i.level === 'bad').length, warn = issues.filter((i) => i.level === 'warn').length;
-  let html = `<button class="btn primary wide" data-act="briefPdf">Download briefing (PDF)${state.mission ? ' · whole mission' : ''}</button>`;
+  let html = `<div class="group step-card" style="--c: var(--c-brief)"><div class="row"><span class="grow"><b>ICARO NOTAM bulletin</b><br><span class="label">${bulletin
+    ? `Bulletin <b>${esc(bulletin.parsed.id || '')}</b> added${bulletin.parsed.issued ? ` · issued ${zl(new Date(bulletin.parsed.issued))}` : ''} — its identifier goes on the M&amp;B sheet and in the NOTAM part.`
+    : 'In ICARO (works from Spain) save the aerodromes bulletin as PDF, then add it here: the app picks out the NOTAMs that matter for your flight and puts the identifier on the M&amp;B sheet and the briefing.'}</span></span>
+    <label class="btn ${bulletin ? '' : 'primary'}">${bulletin ? 'Replace' : 'Add bulletin'}<input type="file" accept="application/pdf,.pdf" data-act="bulFile" hidden></label></div>
+    <div class="row"><a class="btn small" href="https://notampib.enaire.es/icaro" target="_blank" rel="noopener">Open ICARO ↗</a><span class="grow"></span>${bulletin ? '<button class="btn small danger" data-act="bulRemove">Remove</button>' : ''}</div></div>`;
+  html += `<button class="btn primary wide" data-act="briefPdf">Download briefing (PDF)${state.mission ? ' · whole mission' : ''}</button>`;
   html += `<div class="group-title"><span>Go / no-go · ${bad ? `<span class="badge bad">${bad} no-go</span>` : '<span class="badge ok">no blockers</span>'} ${warn ? `<span class="badge warn">${warn} to check</span>` : ''}</span></div>`;
   html += issues.length
     ? `<ul class="issues">${issues.map((i) => `<li class="${i.level}"><span class="ic">${i.level === 'bad' ? '✕' : i.level === 'warn' ? '!' : 'i'}</span><span>${esc(i.text)}</span></li>`).join('')}</ul>`
@@ -1570,8 +1615,7 @@ function renderBriefing() {
   html += `<div class="group-title"><span>2 · NOTAMs</span></div><div class="group">
     <div class="row"><span class="grow">Aerodromes: ${notamAds.join(', ') || '—'} — check every alternate individually</span><a class="btn small" href="https://notampib.enaire.es/icaro" target="_blank" rel="noopener">ICARO ↗</a></div>
     <div class="row"><span class="grow">En-route NOTAMs (Phase 3 manual)</span><a class="btn small" href="https://insigniavfr.enaire.es" target="_blank" rel="noopener">Insignia VFR ↗</a></div>
-    <div class="row">${bulletin ? `<span class="grow">Bulletin <b>${esc(bulletin.parsed.id || '')}</b>${bulletin.parsed.issued ? ` · issued ${zl(new Date(bulletin.parsed.issued))}` : ''}</span><button class="btn small danger" data-act="bulRemove">Remove</button>` : '<span class="grow label">Save the ICARO bulletin as PDF, then add it here: the app picks out what matters for your flight.</span>'}
-      <label class="btn small primary">${bulletin ? 'Replace' : 'Add bulletin'}<input type="file" accept="application/pdf,.pdf" data-act="bulFile" hidden></label></div>
+    ${bulletin ? '' : '<div class="row"><span class="grow label">No bulletin yet — add it at the top of this step.</span></div>'}
     ${B.nflags.length ? `<ul class="issues">${B.nflags.map((i) => `<li class="${i.level}"><span class="ic">${i.level === 'bad' ? '✕' : i.level === 'warn' ? '!' : 'i'}</span><span>${esc(i.text)}</span></li>`).join('')}</ul>` : bulletin ? '<div class="row"><span class="grow label">Nothing in the bulletin for your aerodromes, times or route.</span></div>' : ''}
     <div class="row wrap"><label class="field full"><span>NOTAM bulletin code / relevant NOTAMs (printed on the M&amp;B and the briefing)</span><input data-mb="notams" value="${esc(state.mb.notams)}" placeholder="e.g. ICARO 3123651"></label></div>
   </div>`;
@@ -1599,11 +1643,89 @@ function renderBriefing() {
   // 7. TEM
   html += `<div class="group-title"><span>7 · Threat &amp; error management</span></div><div class="group">${threats.map((t) => `<label class="tem-row"><input type="checkbox" data-tem="${esc(t)}" ${state.tem[t] ? 'checked' : ''}><span>${esc(t)}</span></label>`).join('')}</div>`;
 
-  // Unlocked aerodromes
-  html += `<div class="group-title"><span>My unlocked aerodromes</span></div><div class="group"><div class="chips">${EASY_FIRST.map((ad) => `<label><input type="checkbox" data-unlock="${ad}" ${state.unlocked.includes(ad) ? 'checked' : ''}>${ad}</label>`).join('')}</div></div>
-  <p class="note">Solo flights only go to aerodromes already flown with an instructor (solo manual). Briefing order: weather, NOTAMs, ATC flight plan, mission objective, mass &amp; balance, performance, TEM.</p>`;
+  html += `<p class="note">Briefing order (school briefing list): weather, NOTAMs, ATC flight plan, mission objective, mass &amp; balance, performance, TEM. Your unlocked aerodromes are in Settings (⚙︎).</p>`;
   panels.brief.innerHTML = html;
 }
+
+/* ---------------- Settings ---------------- */
+function renderSettings() {
+  const st = state.settings;
+  let html = `<div class="group-title"><span>About you</span></div><div class="group pad">
+    <div class="row wrap">
+      <label class="field"><span>Name</span><input data-set="name" value="${esc(st.name)}" autocomplete="name"></label>
+      <label class="field narrow"><span>Student code</span><input data-mb="studentCode" value="${esc(state.mb.studentCode)}" autocapitalize="characters"></label>
+    </div></div>
+  <div class="group-title"><span>Signature</span><button class="btn small" data-act="sigClear">Clear</button></div>
+  <div class="group pad"><canvas id="sigPad" class="sig-pad" width="900" height="260"></canvas>
+    <div class="label" style="padding:6px 2px 0">Sign with your finger or the Pencil. It is placed in the signature box of the M&amp;B sheets that have one (P2008, P-Mentor, C172RG, P2006 NG).</div></div>
+  <div class="group-title"><span>Callsigns</span></div><div class="group pad">
+    <div class="row wrap">
+      <label class="field"><span>With instructor (outbound)</span><input data-set="callsign" value="${esc(st.callsign)}" placeholder="FBY12A" autocapitalize="characters" autocomplete="off" spellcheck="false"></label>
+    </div>
+    <div class="row wrap">
+      <label class="field"><span>Solo outbound</span><input data-set="soloOut" value="${esc(st.soloOut)}" placeholder="assigned" autocapitalize="characters" autocomplete="off" spellcheck="false"></label>
+      <label class="field"><span>Solo inbound</span><input data-set="soloIn" value="${esc(st.soloIn)}" placeholder="assigned" autocapitalize="characters" autocomplete="off" spellcheck="false"></label>
+    </div>
+    <div class="row"><span class="grow label">FBYxxY: xx is your instructor's number, Y the time-of-day letter. The inbound callsign is the next letter (FBY12A → FBY12B).</span></div></div>
+  <div class="group-title"><span>My unlocked aerodromes</span></div><div class="group"><div class="chips">${EASY_FIRST.map((ad) => `<label><input type="checkbox" data-unlock="${ad}" ${state.unlocked.includes(ad) ? 'checked' : ''}>${ad}</label>`).join('')}</div></div>
+  <p class="note">Solo flights only go to aerodromes already flown with an instructor (solo manual).</p>
+  <div class="group-title"><span>AEMET surface pressure chart</span></div><div class="group pad"><div id="surfaceBoxSettings">${aemetKey() ? '<div class="label">Your AEMET OpenData key is saved on this device.</div><button class="btn small" data-act="aemetKeyClear">Remove key</button>' : surfaceHtml()}</div></div>
+  <p class="note">Settings stay on this device.</p>`;
+  panels.settings.innerHTML = html;
+  sigInit();
+}
+function sigInit() {
+  const c = document.getElementById('sigPad'); if (!c) return;
+  const g = c.getContext('2d');
+  g.lineWidth = 4; g.lineCap = 'round'; g.lineJoin = 'round'; g.strokeStyle = '#0d2f8f';
+  const shown = state.settings.signaturePad || state.settings.signature;
+  if (shown) { const im = new Image(); im.onload = () => g.drawImage(im, 0, 0, c.width, c.height); im.src = shown; }
+  let drawing = false, last = null;
+  const pos = (e) => { const r = c.getBoundingClientRect(); return [(e.clientX - r.left) * (c.width / r.width), (e.clientY - r.top) * (c.height / r.height)]; };
+  c.addEventListener('pointerdown', (e) => { drawing = true; last = pos(e); c.setPointerCapture(e.pointerId); e.preventDefault(); });
+  c.addEventListener('pointermove', (e) => { if (!drawing) return; const p = pos(e); g.beginPath(); g.moveTo(...last); g.lineTo(...p); g.stroke(); last = p; e.preventDefault(); });
+  const end = () => {
+    if (!drawing) return; drawing = false;
+    // keep the pad as drawn, and a copy cropped to the ink for the sheets
+    state.settings.signaturePad = c.toDataURL('image/png');
+    const d = g.getImageData(0, 0, c.width, c.height).data;
+    let x0 = c.width, y0 = c.height, x1 = -1, y1 = -1;
+    for (let y = 0; y < c.height; y += 2) for (let x = 0; x < c.width; x += 2) if (d[(y * c.width + x) * 4 + 3] > 20) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    if (x1 < 0) { state.settings.signature = ''; return scheduleSave(); }
+    const pad = 6, w = Math.min(c.width, x1 + pad) - Math.max(0, x0 - pad), h = Math.min(c.height, y1 + pad) - Math.max(0, y0 - pad);
+    const t = document.createElement('canvas'); t.width = w; t.height = h;
+    t.getContext('2d').drawImage(c, Math.max(0, x0 - pad), Math.max(0, y0 - pad), w, h, 0, 0, w, h);
+    state.settings.signature = t.toDataURL('image/png'); scheduleSave();
+  };
+  c.addEventListener('pointerup', end); c.addEventListener('pointercancel', end);
+}
+panels.settings.addEventListener('click', (e) => {
+  if (e.target.closest('[data-act=sigClear]')) {
+    const c = document.getElementById('sigPad'); c.getContext('2d').clearRect(0, 0, c.width, c.height);
+    state.settings.signature = ''; state.settings.signaturePad = ''; scheduleSave();
+  }
+  if (e.target.closest('[data-act=aemetKeySave]')) {
+    const v = (document.getElementById('aemetKeyIn')?.value || '').trim();
+    if (!v) return;
+    try { localStorage.setItem(AEMET_KEY, v); } catch { /* private mode */ }
+    surface = null; renderSettings(); toast('AEMET key saved');
+  }
+  if (e.target.closest('[data-act=aemetKeyClear]')) {
+    e.preventDefault();
+    try { localStorage.removeItem(AEMET_KEY); } catch { /* ignore */ }
+    surface = null; renderSettings();
+  }
+});
+panels.settings.addEventListener('change', (e) => {
+  const t = e.target;
+  if (t.dataset.set) { const k = t.dataset.set; state.settings[k] = k === 'name' ? t.value.trim() : t.value.toUpperCase().trim(); scheduleSave(); }
+  if (t.dataset.mb) { state.mb[t.dataset.mb] = t.value.toUpperCase().trim(); scheduleSave(); }
+  if (t.dataset.unlock) {
+    const ad = t.dataset.unlock;
+    state.unlocked = t.checked ? [...new Set([...state.unlocked, ad])] : state.unlocked.filter((x) => x !== ad);
+    update({ rerenderPanels: false }); scheduleSave();
+  }
+});
 
 panels.brief.addEventListener('click', (e) => {
   const c = e.target.closest('[data-copy]');
@@ -1737,7 +1859,7 @@ document.getElementById('btnSavePlan').addEventListener('click', () => {
 });
 document.getElementById('btnNewPlan').addEventListener('click', () => {
   if (!confirm('Start a new plan? Save the current one first if you need it.')) return;
-  const keep = { flight: { ...state.flight }, unlocked: state.unlocked, view: state.view };
+  const keep = { flight: { ...state.flight }, unlocked: state.unlocked, view: state.view, settings: state.settings, mb: { ...defaultState().mb, studentCode: state.mb.studentCode } };
   state = { ...defaultState(), ...keep, planId: null };
   syncSlider(); update({ rerenderPanels: true }); plansPop.hidden = true;
 });
@@ -1755,7 +1877,12 @@ document.getElementById('pdfInput').addEventListener('change', async (e) => {
 /* ---------------- Plan bar, panel ---------------- */
 
 const callsignInput = document.getElementById('callsignInput');
-callsignInput.addEventListener('change', () => { state.flight.callsign = callsignInput.value.toUpperCase().trim(); update({ rerenderPanels: true }); });
+callsignInput.addEventListener('change', () => {
+  state.flight.callsign = callsignInput.value.toUpperCase().trim();
+  const m = state.mission, leg = m && m.legs.find((l) => l.id === m.active);
+  if (leg) { leg.callsign = state.flight.callsign; leg.callsignAuto = false; }
+  update({ rerenderPanels: true });
+});
 function syncPlanBar() { if (document.activeElement !== callsignInput) callsignInput.value = state.flight.callsign || ''; }
 
 function setPanel(open) {
@@ -1784,11 +1911,37 @@ async function loadTerrain() {
   terrainKey = k; terrainData = null; terrainErr = false; renderProfile();
   try {
     const t = await sampleTerrain(wps, legDistances(key));
-    if (terrainKey === k) { terrainData = t; renderProfile(); }
+    if (terrainKey === k) { terrainData = t; if (autoLevels(key, t)) update({ rerenderPanels: true }); else renderProfile(); }
   } catch (err) {
     console.warn('terrain', err);
     if (terrainKey === k) { terrainErr = true; terrainKey = null; renderProfile(); }
   }
+}
+// Default cruising level for an en-route leg from the terrain: the lowest level of the Spanish
+// north/south rule (southbound 3500/5500/7500, northbound 4500/6500/8500) that keeps 1000 ft above
+// the highest terrain within 2 NM of the track (2000 ft over mountainous terrain, above 4000 ft).
+// Only for levels the app chose (altAuto); a level typed or dragged by the student is kept.
+// Obstacles are not in the terrain data — check the chart.
+function autoLevels(key, terr) {
+  if (!terr || !terr.length) return false;
+  const wps = state[key].waypoints, dists = legDistances(key);
+  let d0 = 0, changed = false;
+  for (let i = 1; i < wps.length; i++) {
+    const w = wps[i], d1 = d0 + (dists[i - 1] || 0);
+    if (w.altAuto && !w.proc) {
+      const seg = terr.filter((t) => t.d >= d0 - 0.01 && t.d <= d1 + 0.01);
+      if (seg.length) {
+        const top = Math.max(...seg.map((t) => t.corridor));
+        const need = top + (top >= 4000 ? 2000 : 1000);
+        const mc = ((Math.round(trueCourse(wps[i - 1], w) - (wps[i - 1].var || 0)) % 360) + 360) % 360;
+        const levels = southbound(mc) ? [3500, 5500, 7500, 9500] : [4500, 6500, 8500];
+        const alt = levels.find((l) => l >= need) || levels[levels.length - 1];
+        if (parseAlt(w.alt) !== alt) { w.alt = alt; changed = true; }
+      }
+    }
+    d0 = d1;
+  }
+  return changed;
 }
 function renderProfile() {
   if (!result) return;
@@ -1842,17 +1995,21 @@ for (const id of ['profileCanvas', 'profileCanvasSheet']) {
   const cv = document.getElementById(id);
   if (!cv) continue;
   let drag = null, raf = 0;
+  // Relative drag: the level moves with the finger from where it was (no jump on touch), at a
+  // fixed scale taken when the drag starts (the profile rescales as levels change, which made the
+  // old absolute drag overshoot), and a little slower than the finger for fine control.
   const apply = (e) => {
-    const at = profileAt(cv, e.clientX, e.clientY);
-    if (!at || !drag) return;
+    if (!drag) return;
     const step = altStep();
-    const alt = Math.max(1000, Math.min(14500, Math.round(at.alt / step) * step));
+    const raw = drag.alt0 + (drag.y0 - e.clientY) * drag.ftPerPx * 0.7;
+    const alt = Math.max(1000, Math.min(14500, Math.round(raw / step) * step));
     const w = route().waypoints[drag.leg];
     if (!w || parseAlt(w.alt) === alt) return;
-    w.alt = alt;
+    w.alt = alt; w.altAuto = false;
+    if (navigator.vibrate) navigator.vibrate(5);
     cancelAnimationFrame(raf);
     raf = requestAnimationFrame(() => {
-      update();
+      update({ rerenderPanels: false, winds: false });
       const info = id === 'profileCanvas' ? document.getElementById('profileInfo') : document.getElementById('profileNoteSheet');
       if (info) info.textContent = `${route().waypoints[drag.leg - 1]?.name || ''} → ${w.name}: ${alt} ft`;
     });
@@ -1861,10 +2018,12 @@ for (const id of ['profileCanvas', 'profileCanvasSheet']) {
     const at = profileAt(cv, e.clientX, e.clientY);
     const leg = at && legAtDistance(at.d);
     if (!leg) return;
-    drag = { leg };
+    const w = route().waypoints[leg];
+    const g = cv._geom;
+    const plotH = g ? g.h - g.padT - g.padB : 100;
+    drag = { leg, y0: e.clientY, alt0: parseAlt(w && w.alt) || Math.round(at.alt / 500) * 500, ftPerPx: Math.min(g ? g.top / Math.max(40, plotH) : 50, 50) };  // ≤ 50 ft/px × 0.7 → a 500 ft step every ~14 px
     cv.setPointerCapture(e.pointerId);
     e.preventDefault();
-    apply(e);
   });
   cv.addEventListener('pointermove', (e) => { if (drag) apply(e); });
   const end = () => { if (!drag) return; drag = null; update({ rerenderPanels: true }); };
@@ -1885,6 +2044,7 @@ function update(opts = {}) {
   scheduleTerrain();
   renderTime();
   syncPlanBar();
+  stepStatus();
   if (opts.rerenderPanels !== false) renderPanels();
   if (opts.winds !== false) scheduleAutoWinds();
   scheduleSave();
@@ -2053,7 +2213,7 @@ function syncActiveLeg() {
   if (!m || !m.active || legSwap) return;
   const leg = m.legs.find((l) => l.id === m.active);
   if (!leg) return;
-  leg.main = clone(state.main); leg.time = state.time;
+  leg.main = clone(state.main); leg.time = state.time; leg.callsign = state.flight.callsign;
   if (m.type === 'local') m.sharedAlt = clone(state.alt); else leg.alt = clone(state.alt);
   if (legChainIndex(leg) === 0) leg.fob = +state.flight.fob || 0;
 }
@@ -2062,15 +2222,15 @@ const legChainIndex = (leg) => legsOfChain(leg).indexOf(leg);
 
 // Run fn with a leg loaded into the planner (state + result), then put everything back.
 function withLeg(leg, fobL, fn) {
-  const keep = { main: state.main, alt: state.alt, time: state.time, fob: state.flight.fob, result, active: state.active };
+  const keep = { main: state.main, alt: state.alt, time: state.time, fob: state.flight.fob, result, active: state.active, callsign: state.flight.callsign };
   legSwap = true;
   try {
     state.main = clone(leg.main); state.alt = clone(state.mission.type === 'local' ? state.mission.sharedAlt : leg.alt) || { waypoints: [], stdDep: false, stdArr: false };
-    state.time = leg.time; state.flight.fob = fobL; state.active = 'main'; keep.carried = state.flight.carried; state.flight.carried = true;
+    state.time = leg.time; state.flight.fob = fobL; state.active = 'main'; state.flight.callsign = leg.callsign || keep.callsign; keep.carried = state.flight.carried; state.flight.carried = true;
     result = compute();
     return fn();
   } finally {
-    Object.assign(state, { main: keep.main, alt: keep.alt, time: keep.time, active: keep.active }); state.flight.fob = keep.fob; state.flight.carried = keep.carried; result = keep.result;
+    Object.assign(state, { main: keep.main, alt: keep.alt, time: keep.time, active: keep.active }); state.flight.fob = keep.fob; state.flight.carried = keep.carried; state.flight.callsign = keep.callsign; result = keep.result;
     legSwap = false;
   }
 }
@@ -2142,9 +2302,30 @@ function createMission(type, d) {
     trip('b', d.b1, d.b2, 'Trip B');
   }
   m.legs.forEach((l, i) => { if (i === 0 || legChainIndexIn(m, l) === 0) l.fob = +state.flight.fob || acOf(state.flight.type).fuelMaxL; });
+  assignCallsigns(m, d.callsign);
   state.mission = m;
   openLeg(m.legs[0].id, true);
   state.mode = 'mission'; showPanels(); renderPanels();
+}
+// Callsigns: FBYxxY — xx instructor number, Y the time-of-day letter. Outbound and inbound differ
+// only in the last letter (FBY12A out → FBY12B in). Solo flights use the assigned solo callsigns
+// from Settings. Every leg stays editable.
+const nextCallsign = (cs, n = 1) => {
+  const m = /^(.*?)([A-Y])$/i.exec(cs || '');
+  if (!m || n <= 0) return cs || '';
+  const c = String.fromCharCode(Math.min(90, m[2].toUpperCase().charCodeAt(0) + n));
+  return m[1] + c;
+};
+function assignCallsigns(m, typed) {
+  const st = state.settings || {};
+  const solo = state.flight.solo && st.soloOut && (!typed || typed === st.soloOut.toUpperCase());
+  const out = (typed || (solo ? st.soloOut : st.callsign || state.flight.callsign || '')).toUpperCase();
+  const inb = solo ? (st.soloIn || nextCallsign(st.soloOut)).toUpperCase() : null;
+  for (const l of m.legs) {
+    const i = legChainIndexIn(m, l);
+    l.callsign = i === 0 ? out : inb && m.type !== 'tri' ? inb : nextCallsign(out, i);
+    l.callsignAuto = i > 0;
+  }
 }
 const legPlanned = (l) => (l.main.waypoints || []).length >= 2 && (!l.target || l.main.waypoints.at(-1).ref === l.target);
 const legChainIndexIn = (m, leg) => m.legs.filter((l) => l.chain === leg.chain).indexOf(leg);
@@ -2159,6 +2340,7 @@ function openLeg(id, quiet) {
   state.alt = clone(m.type === 'local' ? m.sharedAlt : leg.alt) || { waypoints: [], stdDep: false, stdArr: false };
   state.time = leg.time; state.active = 'main';
   state.flight.fob = figs ? Math.round(figs.get(id).fob * 10) / 10 : +leg.fob || state.flight.fob;
+  if (leg.callsign) { state.flight.callsign = leg.callsign; }
   state.flight.carried = !!figs; // later legs carry the fuel left (no full tanks, e.g. LERJ → LEBG on a cross-country)
   syncSlider();
   if (!quiet) { state.mode = 'plan'; tab = 'route'; showPanels(); toast(`Editing ${leg.label}`); }
@@ -2166,12 +2348,21 @@ function openLeg(id, quiet) {
   setTimeout(fitRoute, 50);
 }
 
+const MS_TYPES = [
+  { v: 'single', t: 'Single flight', d: 'One navigation with its alternate — plan it straight away.' },
+  { v: 'local', t: 'Local navigation', d: '2 navlogs (one + a reserve) sharing an alternate, 1 M&B.' },
+  { v: 'xc', t: 'Cross-country', d: 'Outbound + inbound, the same for a reserve airport, plus a local nav — each with its alternate.' },
+  { v: 'tri', t: 'Triangular', d: 'Two trips of three legs (two airports + base), 300 NM each.' },
+];
+let msTypeSel = 'local';
 function missionFormHtml(replace) {
   const opts = (sel) => APPROVED.map((ad) => `<option ${ad === sel ? 'selected' : ''}>${ad}</option>`).join('');
-  return `<div class="row wrap">
-      <label class="field"><span>Type</span><select id="msType">
-        <option value="local">Local navigation</option><option value="xc">Cross-country</option><option value="tri">Triangular</option></select></label>
+  return `<div class="type-cards">${MS_TYPES.map((x) => `<button type="button" class="type-card${x.v === msTypeSel ? ' on' : ''}" data-mstype="${x.v}"><b>${x.t}</b><span>${x.d}</span></button>`).join('')}</div>
+    <select id="msType" hidden>${MS_TYPES.filter((x) => x.v !== 'single').map((x) => `<option value="${x.v}" ${x.v === msTypeSel ? 'selected' : ''}>${x.t}</option>`).join('')}</select>
+    <div id="msForm" ${msTypeSel === 'single' ? 'hidden' : ''}>
+    <div class="row wrap">
       <label class="field narrow"><span>Base</span><select id="msBase">${['LEBG', 'LERJ'].map((x) => `<option>${x}</option>`).join('')}</select></label>
+      <label class="field"><span>Callsign (outbound)</span><input id="msCallsign" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="FBY12A" value="${esc((state.flight.solo && state.settings.soloOut) || state.settings.callsign || state.flight.callsign || '')}"></label>
     </div>
     <div class="row wrap" id="msXc" hidden>
       <label class="field"><span>Destination</span><select id="msDest">${opts('LEVT')}</select></label>
@@ -2183,45 +2374,64 @@ function missionFormHtml(replace) {
       <label class="field"><span>Trip B · 1st</span><select id="msB1">${opts('LEVT')}</select></label>
       <label class="field"><span>Trip B · 2nd</span><select id="msB2">${opts('LEPP')}</select></label>
     </div>
-    <div class="row"><span class="grow label">Local: 2 navlogs + a shared alternate, 1 M&amp;B. Cross-country: 2 flights + 2 for the reserve airport + 1 local nav = 5 navlogs, each with its alternate, 1 M&amp;B per flight, no refuel. Triangular: two different trips, two airports + base, 300 NM each (solo manual).</span></div>
-    <button class="btn primary wide" data-act="msCreate">${replace ? 'Replace the mission' : 'Create mission'}</button>`;
+    <div class="row"><span class="grow label">The inbound callsign is worked out from the outbound one (FBY12A → FBY12B); solo flights use your solo callsigns from Settings. Each leg can be changed afterwards.</span></div>
+    <button class="btn primary wide" data-act="msCreate">${replace ? 'Replace the mission' : 'Create mission'}</button>
+    </div>
+    <div id="msSingle" ${msTypeSel === 'single' ? '' : 'hidden'}><button class="btn primary wide" data-act="msSingle">Plan a single flight →</button></div>`;
 }
+
+const HOWTO = `<div class="howto">
+  <div><span class="n" style="--c: var(--c-mission)">1</span><b>Mission</b> choose what you are flying</div>
+  <div><span class="n" style="--c: var(--c-plan)">2</span><b>Plan</b> tap your points on the chart — main route, then the alternate</div>
+  <div><span class="n" style="--c: var(--c-mb)">3</span><b>M&amp;B</b> masses, fuel and performance on the school's sheet</div>
+  <div><span class="n" style="--c: var(--c-brief)">4</span><b>Briefing</b> add the ICARO NOTAM bulletin, check the go/no-go, download the PDF</div>
+</div>`;
 
 function renderMission() {
   syncActiveLeg();
   const m = state.mission;
   if (!m) {
-    panels.mission.innerHTML = `<div class="group-title"><span>New mission</span></div><div class="group">${missionFormHtml(false)}</div>
-      <p class="note">A mission keeps every navlog, alternate and M&amp;B of the flight together and downloads them as one PDF.</p>`;
+    panels.mission.innerHTML = `${result.main.rows.length ? '' : HOWTO}<div class="group-title"><span>What are you flying?</span></div><div class="group pad">${missionFormHtml(false)}</div>
+      <p class="note">A mission keeps every navlog, alternate and M&amp;B of the flight together and downloads them as one PDF. Your name, signature, callsigns and unlocked aerodromes are in Settings (⚙︎).</p>`;
     return wireMissionForm();
   }
   const figs = missionFigures();
   const names = { local: 'Local navigation', xc: 'Cross-country', tri: 'Triangular' };
-  let html = `<div class="group-title"><span>${names[m.type]}</span><button class="btn small primary" data-act="msPdf">Download all (briefing + navlogs + M&amp;B)</button></div><div class="group">`;
-  for (const leg of m.legs) {
+  let html = `<div class="group-title"><span>${names[m.type]} · ${m.legs.length} navlogs</span></div><div class="group">`;
+  m.legs.forEach((leg, n) => {
     const f = figs.get(leg.id), i = legChainIndex(leg);
     const planned = legPlanned(leg);
     const ok = planned && f.fuelOk && f.mbOk !== false && !f.issues.length;
-    html += `<div class="wx${leg.id === m.active ? ' active' : ''}"><div class="wx-head"><b>${esc(leg.label)}</b>${leg.id === m.active ? '<span class="label">open</span>' : ''}<span class="badge ${ok ? 'ok' : planned ? 'bad' : 'warn'}">${ok ? 'OK' : planned ? 'CHECK' : 'TO PLAN'}</span></div>
-      ${planned ? '' : `<div class="label">→ ${esc(leg.target || '')} · to plan — open it and tap your points; the dotted line is only a guide.</div>`}
-${planned ? `<div class="label">${f.dep?.icao || '?'} → ${planned ? f.dest?.icao || '?' : leg.target || '?'}${f.alt ? ` · alt ${f.alt.icao}` : leg.altTarget ? ` · alt ${leg.altTarget}` : ''} · ${f.dist} NM · ${fmtHMS(f.timeSec).slice(0, 5)} · T/O ${zl(f.t)} → LDG ${zl(f.ldg)}</div>
-      <div class="label">FOB ${f.fob.toFixed(1)} L${i > 0 ? (leg.refuel ? ' (refuel: full tanks)' : ' (carried from the previous leg)') : ''} · trip ${f.trip.toFixed(1)} L · minimum ${f.required} L ${f.fuelOk ? '✓' : '✕'} · M&amp;B ${f.mbOk == null ? '—' : f.mbOk ? '✓' : '✕'}</div>` : ''}
+    html += `<div class="wx leg-card${leg.id === m.active ? ' active' : ''}"><div class="wx-head"><span class="leg-no">${n + 1}</span><b>${esc(leg.label)}</b><span class="grow"></span><span class="badge ${ok ? 'ok' : planned ? 'bad' : 'warn'}">${ok ? 'OK' : planned ? 'CHECK' : 'TO PLAN'}</span></div>
+      ${planned ? `<div class="label">${f.dep?.icao || '?'} → ${f.dest?.icao || '?'}${f.alt ? ` · alt ${f.alt.icao}` : leg.altTarget ? ` · alt ${leg.altTarget} (to plan)` : ''} · ${f.dist} NM · ${fmtHMS(f.timeSec).slice(0, 5)} · T/O ${zl(f.t)} → LDG ${zl(f.ldg)}</div>
+      <div class="label">FOB ${f.fob.toFixed(1)} L${i > 0 ? (leg.refuel ? ' (refuel: full tanks)' : ' (carried from the previous leg)') : ''} · trip ${f.trip.toFixed(1)} L · minimum ${f.required} L ${f.fuelOk ? '✓' : '✕'} · M&amp;B ${f.mbOk == null ? '—' : f.mbOk ? '✓' : '✕'}</div>`
+    : `<div class="label">→ ${esc(leg.target || '')} · open it and tap your points; the dotted line on the chart is only a guide.</div>`}
       ${f.issues.length ? `<div class="label warn">${f.issues.map(esc).join('<br>')}</div>` : ''}
-      <div class="row" style="padding:6px 0 0">${i > 0 && m.type === 'tri' ? `<label class="tem-row" style="flex:1"><input type="checkbox" data-refuel="${leg.id}" ${leg.refuel ? 'checked' : ''}><span>Refuel at ${f.dep?.icao || ''}${f.dep && NO_REFUEL.includes(f.dep.icao) ? ' — no AVGAS there (AIP)' : f.dep && AIP_NOTES[f.dep.icao] ? ` — ${esc(AIP_NOTES[f.dep.icao].fuel)}` : ' (only where AVGAS 100LL is available)'}</span></label>` : '<span class="grow"></span>'}
-      <button class="btn small" data-open="${leg.id}">${leg.id === m.active ? 'Edit' : 'Open'}</button></div></div>`;
-  }
+      <div class="row leg-actions"><label class="field cs"><span>Callsign</span><input data-lcs="${leg.id}" value="${esc(leg.callsign || '')}" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="FBY12A"></label>
+      ${i > 0 && m.type === 'tri' ? `<label class="tem-row refuel"><input type="checkbox" data-refuel="${leg.id}" ${leg.refuel ? 'checked' : ''}><span>Refuel at ${f.dep?.icao || ''}${f.dep && NO_REFUEL.includes(f.dep.icao) ? ' — no AVGAS (AIP)' : ''}</span></label>` : '<span class="grow"></span>'}
+      <button class="btn small ${leg.id === m.active ? '' : 'primary'}" data-open="${leg.id}">${leg.id === m.active ? 'Plan ›' : 'Open ›'}</button></div></div>`;
+  });
   html += '</div>';
   html += `<div class="group-title"><span>Mission checks</span></div><div class="group">${missionChecks(figs).map((c) => `<div class="row ${c.ok ? 'check-ok' : 'check-bad'}"><span class="grow label">${esc(c.text)}</span><span class="value">${c.ok ? 'OK' : '✕'}</span></div>`).join('')}</div>
-    <p class="note">Open a leg to plan it on the chart — it is saved back into the mission automatically. Both local navlogs share one alternate. Set each leg's time with the time slider while it is open. Cross-countries carry the fuel from the outbound flight (no refuel).</p>
-    <details class="group" style="padding:10px 12px"><summary class="label">New mission</summary>${missionFormHtml(true)}</details>`;
+    <button class="btn primary wide next-step" data-goto="plan" style="--c: var(--c-plan)">Next · 2 Plan the open leg →</button>
+    <p class="note">Open a leg to plan it on the chart — it is saved back into the mission automatically. ${m.type === 'local' ? 'Both local navlogs share one alternate. ' : 'Every navlog has its own alternate. '}Set each leg's time with the time slider while it is open. Later legs carry the fuel left from the previous one.</p>
+    <details class="group options"><summary>Start a different mission</summary><div class="pad">${missionFormHtml(true)}</div></details>`;
   panels.mission.innerHTML = html;
   wireMissionForm();
 }
 function wireMissionForm() {
   const sel = panels.mission.querySelector('#msType');
   if (!sel) return;
-  const sync = () => { panels.mission.querySelector('#msXc').hidden = sel.value !== 'xc'; panels.mission.querySelector('#msTri').hidden = sel.value !== 'tri'; };
-  sel.addEventListener('change', sync); sync();
+  const sync = () => {
+    panels.mission.querySelector('#msXc').hidden = msTypeSel !== 'xc';
+    panels.mission.querySelector('#msTri').hidden = msTypeSel !== 'tri';
+    panels.mission.querySelector('#msForm').hidden = msTypeSel === 'single';
+    panels.mission.querySelector('#msSingle').hidden = msTypeSel !== 'single';
+    panels.mission.querySelectorAll('[data-mstype]').forEach((b) => b.classList.toggle('on', b.dataset.mstype === msTypeSel));
+    if (msTypeSel !== 'single') sel.value = msTypeSel;
+  };
+  sync();
+  panels.mission.querySelectorAll('[data-mstype]').forEach((b) => b.addEventListener('click', () => { msTypeSel = b.dataset.mstype; sync(); }));
 }
 
 function missionChecks(figs) {
@@ -2267,11 +2477,25 @@ panels.mission.addEventListener('click', async (e) => {
   if (e.target.closest('[data-act=msCreate]')) {
     const v = (id) => panels.mission.querySelector(id)?.value;
     if (state.mission && !confirm('Replace the current mission? Its legs will be lost (save it under Plans first if needed).')) return;
-    return createMission(v('#msType'), { base: v('#msBase'), dest: v('#msDest'), reserve: v('#msRes'), a1: v('#msA1'), a2: v('#msA2'), b1: v('#msB1'), b2: v('#msB2') });
+    return createMission(v('#msType'), { base: v('#msBase'), dest: v('#msDest'), reserve: v('#msRes'), a1: v('#msA1'), a2: v('#msA2'), b1: v('#msB1'), b2: v('#msB2'), callsign: (v('#msCallsign') || '').toUpperCase().trim() });
+  }
+  if (e.target.closest('[data-act=msSingle]')) {
+    if (state.mission && !confirm('Leave the current mission and plan a single flight? (Save it under Plans first if needed.)')) return;
+    syncActiveLeg(); state.mission = null; state.missionSkipped = true;
+    return goStep('plan');
   }
   if (e.target.closest('[data-act=msPdf]')) return downloadBriefing();
 });
 panels.mission.addEventListener('change', (e) => {
+  const lcs = e.target.dataset.lcs;
+  if (lcs) {
+    const m = state.mission, leg = m.legs.find((l) => l.id === lcs);
+    leg.callsign = e.target.value.toUpperCase().trim(); leg.callsignAuto = false;
+    // the first leg of a trip sets the later ones that were not changed by hand (FBY12A → FBY12B)
+    if (legChainIndex(leg) === 0) legsOfChain(leg).slice(1).forEach((l, k) => { if (l.callsignAuto !== false) l.callsign = nextCallsign(leg.callsign, k + 1); });
+    if (leg.id === m.active) { state.flight.callsign = leg.callsign; syncPlanBar(); }
+    save(); return renderMission();
+  }
   const r = e.target.dataset.refuel;
   if (!r) return;
   const leg = state.mission.legs.find((l) => l.id === r);
@@ -2303,7 +2527,7 @@ async function downloadMission() {
       if (!mbDone.has(key)) {
         mbDone.add(key);
         const mbBytes = withLeg(leg, f.fob, () => (result.mb ? buildMbPdf(result.mb, {
-          date: flightTime().toLocaleDateString('en-GB'), reg: state.flight.reg, studentCode: state.mb.studentCode,
+          date: flightTime().toLocaleDateString('en-GB'), reg: state.flight.reg, studentCode: state.mb.studentCode, signature: state.settings.signature,
           weather: state.flight.weather, notams: state.mb.notams, perf: perfResults(),
         }) : null));
         if (mbBytes) await add(await mbBytes);
@@ -2332,7 +2556,7 @@ function legPack(fob) {
   };
   const sheets = [{ header: headerFor('main'), rows: result.main.rows }];
   if (result.alt.rows.length) sheets.push({ header: headerFor('alt'), rows: result.alt.rows });
-  const mbArgs = result.mb ? [result.mb, { date: t.toLocaleDateString('en-GB'), reg: f.reg, studentCode: state.mb.studentCode, weather: f.weather, notams: state.mb.notams, perf: B.perf }] : null;
+  const mbArgs = result.mb ? [result.mb, { date: t.toLocaleDateString('en-GB'), reg: f.reg, studentCode: state.mb.studentCode, signature: state.settings.signature, weather: f.weather, notams: state.mb.notams, perf: B.perf }] : null;
   const routes = [{ wps: clone(state.main.waypoints), rows: clone(result.main.rows), color: '#d1009a' }];
   if (state.alt.waypoints.length > 1) routes.push({ wps: clone(state.alt.waypoints), rows: clone(result.alt.rows), color: '#0a84ff', alt: true });
   const mapData = state.main.waypoints.length > 1 ? { routes, title: `${B.dep?.icao || ''} -> ${B.dest?.icao || ''}${B.alt ? ` (alternate ${B.alt.icao})` : ''}` } : null;
@@ -2417,7 +2641,8 @@ async function downloadBriefing() {
     out.setTitle(m ? 'Mission briefing' : 'Flight briefing');
     const d = flightTime().toISOString().slice(0, 10);
     saveBlob(await out.save(), m ? `Briefing_Mission_${d}.pdf` : `Briefing_${endpoint('main', 0)?.icao || ''}-${endpoint('main', -1)?.icao || ''}_${d}.pdf`);
-    toast(chartsMissing ? 'Briefing PDF ready — the AEMET charts could not be added (open them from the Briefing tab)' : 'Briefing PDF ready');
+    state.briefDone = true; stepStatus(); scheduleSave();
+    toast(chartsMissing ? 'Briefing PDF ready — the AEMET charts could not be added (open them in step 4 · Briefing)' : 'Briefing PDF ready');
   } catch (err) { console.error(err); toast('Could not build the briefing: ' + err.message); }
   finally { wxState = keepWx; }
 }

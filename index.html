@@ -76,11 +76,13 @@
     <div class="grabber" id="grabber"><span></span></div>
 
     <div class="modebar">
-      <div class="segmented" id="modes" role="tablist" aria-label="Section">
-        <button role="tab" data-mode="plan" class="on">Flight plan</button>
-        <button role="tab" data-mode="mb">M&amp;B</button>
-        <button role="tab" data-mode="mission">Mission</button>
-      </div>
+      <nav class="steps" id="modes" role="tablist" aria-label="Steps">
+        <button role="tab" data-mode="mission" style="--c: var(--c-mission)"><span class="num">1</span><span class="lbl">Mission</span></button>
+        <button role="tab" data-mode="plan" class="on" style="--c: var(--c-plan)"><span class="num">2</span><span class="lbl">Plan</span></button>
+        <button role="tab" data-mode="mb" style="--c: var(--c-mb)"><span class="num">3</span><span class="lbl">M&amp;B</span></button>
+        <button role="tab" data-mode="brief" style="--c: var(--c-brief)"><span class="num">4</span><span class="lbl">Briefing</span></button>
+      </nav>
+      <button class="icon-btn gear" data-mode="settings" id="btnSettings" type="button" aria-label="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg></button>
     </div>
 
     <div class="planbar" id="planBar">
@@ -115,7 +117,6 @@
         <button role="tab" data-tab="route" class="on">Route</button>
         <button role="tab" data-tab="navlog">Navlog</button>
         <button role="tab" data-tab="fuel">Fuel</button>
-        <button role="tab" data-tab="brief">Briefing</button>
         <button role="tab" data-tab="profile" class="narrow-only">Profile</button>
       </div>
       <div class="segmented small" id="routeSel">
@@ -132,6 +133,7 @@
       <div class="panel" data-panel="profile" hidden><div class="profile-panel"><canvas id="profileCanvasSheet"></canvas></div><p class="note" id="profileNoteSheet"></p></div>
       <div class="panel" data-panel="mb" hidden></div>
       <div class="panel" data-panel="mission" hidden></div>
+      <div class="panel" data-panel="settings" hidden></div>
     </div>
   </section>
 

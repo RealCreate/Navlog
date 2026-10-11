@@ -64,6 +64,28 @@ export async function renderRouteMap(routes, { width = 2400, height = 1650, titl
     g.fillStyle = fg; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(text, x, y + 1);
   };
 
+  // HAT box, numbered per leg: [n | heading | altitude | time]
+  const hatBox = (n, parts, cx, cy, col) => {
+    const size = 25 * s, padX = 10 * s, h = size * 1.5;
+    g.font = `800 ${size}px Helvetica, Arial, sans-serif`;
+    const cells = [n, ...parts].map((t) => ({ t, w: g.measureText(t).width + 2 * padX }));
+    const W = cells.reduce((t, c) => t + c.w, 0);
+    let x = cx - W / 2; const y = cy - h / 2;
+    g.save();
+    g.shadowColor = 'rgba(0,0,0,0.3)'; g.shadowBlur = 6 * s;
+    g.fillStyle = '#fff'; g.beginPath(); g.roundRect ? g.roundRect(x, y, W, h, 8 * s) : g.rect(x, y, W, h); g.fill();
+    g.shadowBlur = 0;
+    cells.forEach((c, k) => {
+      if (k === 0) { g.fillStyle = col; g.beginPath(); g.roundRect ? g.roundRect(x, y, c.w, h, [8 * s, 0, 0, 8 * s]) : g.rect(x, y, c.w, h); g.fill(); }
+      else { g.strokeStyle = 'rgba(0,0,0,0.15)'; g.lineWidth = 1.5 * s; g.beginPath(); g.moveTo(x, y + 4 * s); g.lineTo(x, y + h - 4 * s); g.stroke(); }
+      g.fillStyle = k === 0 ? '#fff' : '#111'; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText(c.t, x + c.w / 2, y + h / 2 + 1);
+      x += c.w;
+    });
+    g.strokeStyle = col; g.lineWidth = 3 * s; g.beginPath(); g.roundRect ? g.roundRect(cx - W / 2, y, W, h, 8 * s) : g.rect(cx - W / 2, y, W, h); g.stroke();
+    g.restore();
+  };
+
   for (const r of routes) {
     const col = r.color;
     const wp = r.wps.map(P);
@@ -100,10 +122,10 @@ export async function renderRouteMap(routes, { width = 2400, height = 1650, titl
         done += row.dist;
       }
       const last = legRows[legRows.length - 1];
-      if (last && L > 160 * s) {
+      if (last && L > 120 * s) {
         const ete = legRows.reduce((t, x) => t + x.eteSec, 0);
-        const m = at(0.5), off = 44 * s;
-        label(`${pad3(last.mh)}°  ${last.altDisp || ''}  ${mmss(ete)}`, m.x - nx * off, m.y - ny * off, { fg: col, border: col, size: 21 });
+        const m = at(0.5), off = 52 * s;
+        hatBox(`${r.alt ? 'A' : ''}${i}`, [`${pad3(last.mh)}°`, `${last.altDisp || ''}`, mmss(ete)], m.x - nx * off, m.y - ny * off, col);
       }
     }
     // circled waypoints with names
