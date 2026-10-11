@@ -3,6 +3,7 @@ import { computeNavlog, stdFlags, fuelPolicy, fmtMMSS, fmtHMS, fmtVar, fmtAlt, p
 import { buildNavlogPdf, buildMbPdf } from './pdf.js';
 import { addBriefingPages, addMissionCover, fonts as pdfFonts, pdfText } from './briefpdf.js';
 import { renderRouteMap, addMapPage } from './mapprint.js';
+import { parseBulletin, pdfLines, notamFlags } from './notam.js';
 import { sampleTerrain, plannedProfile, drawProfile, profileAt } from './profile.js';
 import { PlacesLayer } from './places.js';
 import { fetchWinds } from './winds.js';
@@ -1336,13 +1337,51 @@ function weatherIssues() {
 
 function copyBtn(id) { return `<div class="copy-row"><button class="btn small" data-copy="${id}">Copy</button></div>`; }
 
+/* ---------------- ICARO NOTAM bulletin (saved PDF, added by the student) ---------------- */
+const BULLETIN_KEY = 'navlog.bulletin.v1';
+let bulletin = (() => { try { return JSON.parse(localStorage.getItem(BULLETIN_KEY)); } catch { return null; } })();
+const b64ToBytes = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+function bytesToB64(bytes) { let s = ''; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000)); return btoa(s); }
+async function addBulletin(file) {
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const parsed = parseBulletin(await pdfLines(bytes));
+    if (!parsed.id && !Object.keys(parsed.ads).length) return toast('That PDF does not look like an ICARO bulletin');
+    bulletin = { name: file.name, added: Date.now(), b64: bytesToB64(bytes), parsed };
+    try { localStorage.setItem(BULLETIN_KEY, JSON.stringify(bulletin)); } catch { toast('Bulletin read, but too big to keep after closing the app'); }
+    // school practice: the bulletin identifier goes in the NOTAM box, and as the MET source when it includes METAR/TAF
+    const id = parsed.id ? `ICARO ${parsed.id}` : 'ICARO bulletin';
+    state.mb.notams = id;
+    const hasMet = Object.values(parsed.ads).some((a) => a.metar || a.taf);
+    if (hasMet && (!state.flight.weather || /^ICARO/.test(state.flight.weather))) state.flight.weather = id;
+    toast(`Bulletin ${parsed.id || ''} added`);
+    update({ rerenderPanels: true });
+  } catch (err) { console.error(err); toast('Could not read the bulletin: ' + err.message); }
+}
+function removeBulletin() { bulletin = null; try { localStorage.removeItem(BULLETIN_KEY); } catch { /* ignore */ } update({ rerenderPanels: true }); }
+/** NOTAM flags for the flight currently loaded in the planner. */
+function bulletinFlags() {
+  if (!bulletin) return [];
+  const { to, ldg, altArr } = times();
+  const ads = [[endpoint('main', 0), to], [endpoint('main', -1), ldg], [endpoint('alt', -1), altArr]].filter(([a]) => a).map(([a, t]) => ({ icao: a.icao, t }));
+  const legs = [...routeLegs('main'), ...routeLegs('alt')].map((l) => [l.a, l.b]);
+  const crossings = airspaceCrossings(routeLegs('main'), AIRSPACES).map((c) => ({ code: c.sp.id, label: `${c.sp.type}${c.sp.id || ''} ${c.sp.name || ''}` }));
+  const sun = (icao, t) => { const a = adByIcao(icao); return a ? sunTimes(t, a.lat, a.lon) : null; };
+  const flags = notamFlags(bulletin.parsed, { ads, legs, crossings, sun });
+  for (const a of ads) if (!bulletin.parsed.ads[a.icao]) flags.unshift({ level: 'warn', text: `${a.icao} is not in the ICARO bulletin ${bulletin.parsed.id || ''} — request a new bulletin with it` });
+  const issued = bulletin.parsed.issued;
+  if (issued && to.getTime() - issued > 6 * 3600e3) flags.unshift({ level: 'warn', text: `ICARO bulletin issued ${Math.round((to.getTime() - issued) / 3600e3)} h before departure — get a fresh one` });
+  return flags;
+}
+
 // Everything on the briefing list (SOP briefing order), for the Briefing tab and the briefing PDF.
 function briefingData() {
   const f = state.flight;
   const dep = endpoint('main', 0), dest = endpoint('main', -1), alt = endpoint('alt', -1);
   const { to, ldg, altArr } = times();
   const ft = fleetType(f.type);
-  const issues = dedupe([...weatherIssues(), ...planIssues()]);
+  const nflags = bulletinFlags();
+  const issues = dedupe([...weatherIssues(), ...planIssues(), ...nflags.filter((x) => x.level !== 'info').map((x) => ({ level: x.level, text: `NOTAM ${x.text}` }))]);
   const order = { bad: 0, warn: 1, info: 2 };
   issues.sort((x, y) => order[x.level] - order[y.level]);
   // 1. weather per aerodrome
@@ -1384,7 +1423,7 @@ function briefingData() {
   // 7. TEM
   const crossings = airspaceCrossings(routeLegs('main'), AIRSPACES);
   const threats = temThreats({ ads: [dep, dest, alt].filter(Boolean).map((x) => x.icao), crossings, solo: f.solo, night, mountains: (terrainData || []).some((t) => t.corridor > 4500), hot: wxState.data && dep && (wxState.data[dep.icao]?.metar?.temp ?? 0) > 30 });
-  return { dep, dest, alt, to, ldg, issues, wx, limits, notamAds, fpl, depText, arrText, chartAds, freq: headerFor('main').freq, mb: result.mb, perf: perfResults(), threats, fuel: result.fuel };
+  return { dep, dest, alt, to, ldg, issues, nflags, bulletin: bulletin && bulletin.parsed, wx, limits, notamAds, fpl, depText, arrText, chartAds, freq: headerFor('main').freq, mb: result.mb, perf: perfResults(), threats, fuel: result.fuel };
 }
 
 function renderBriefing() {
@@ -1414,7 +1453,10 @@ function renderBriefing() {
   html += `<div class="group-title"><span>2 · NOTAMs</span></div><div class="group">
     <div class="row"><span class="grow">Aerodromes: ${notamAds.join(', ') || '—'} — check every alternate individually</span><a class="btn small" href="https://notampib.enaire.es/icaro" target="_blank" rel="noopener">ICARO ↗</a></div>
     <div class="row"><span class="grow">En-route NOTAMs (Phase 3 manual)</span><a class="btn small" href="https://insigniavfr.enaire.es" target="_blank" rel="noopener">Insignia VFR ↗</a></div>
-    <div class="row wrap"><label class="field full"><span>NOTAM bulletin code / relevant NOTAMs (printed on the M&amp;B and the briefing)</span><input data-mb="notams" value="${esc(state.mb.notams)}" placeholder="e.g. bulletin code, RWY works…"></label></div>
+    <div class="row">${bulletin ? `<span class="grow">Bulletin <b>${esc(bulletin.parsed.id || '')}</b>${bulletin.parsed.issued ? ` · issued ${zl(new Date(bulletin.parsed.issued))}` : ''}</span><button class="btn small danger" data-act="bulRemove">Remove</button>` : '<span class="grow label">Save the ICARO bulletin as PDF, then add it here: the app picks out what matters for your flight.</span>'}
+      <label class="btn small primary">${bulletin ? 'Replace' : 'Add bulletin'}<input type="file" accept="application/pdf,.pdf" data-act="bulFile" hidden></label></div>
+    ${B.nflags.length ? `<ul class="issues">${B.nflags.map((i) => `<li class="${i.level}"><span class="ic">${i.level === 'bad' ? '✕' : i.level === 'warn' ? '!' : 'i'}</span><span>${esc(i.text)}</span></li>`).join('')}</ul>` : bulletin ? '<div class="row"><span class="grow label">Nothing in the bulletin for your aerodromes, times or route.</span></div>' : ''}
+    <div class="row wrap"><label class="field full"><span>NOTAM bulletin code / relevant NOTAMs (printed on the M&amp;B and the briefing)</span><input data-mb="notams" value="${esc(state.mb.notams)}" placeholder="e.g. ICARO 3123651"></label></div>
   </div>`;
 
   // 3. ATC flight plan
@@ -1455,11 +1497,13 @@ panels.brief.addEventListener('click', (e) => {
   if (e.target.closest('[data-act=wx]')) loadWeather(true);
   if (e.target.closest('[data-act=toMb]')) document.querySelector('#modes [data-mode=mb]').click();
   if (e.target.closest('[data-act=briefPdf]')) downloadBriefing();
+  if (e.target.closest('[data-act=bulRemove]')) removeBulletin();
 });
 panels.brief.addEventListener('change', (e) => {
   const t = e.target;
   if (t.dataset.tem) { state.tem[t.dataset.tem] = t.checked; scheduleSave(); }
   if (t.dataset.mb) { state.mb[t.dataset.mb] = t.value; scheduleSave(); }
+  if (t.dataset.act === 'bulFile' && t.files && t.files[0]) addBulletin(t.files[0]);
   if (t.dataset.unlock) {
     const ad = t.dataset.unlock;
     state.unlocked = t.checked ? [...new Set([...state.unlocked, ad])] : state.unlocked.filter((x) => x !== ad);
@@ -2199,8 +2243,12 @@ async function downloadBriefing() {
     } else {
       const p = legPack(); p.withMb = true; packs.push(p);
     }
+    let bulletinAdded = false;
+    const addBulletinPages = async () => { if (bulletin && !bulletinAdded) { bulletinAdded = true; await add(b64ToBytes(bulletin.b64)); } };
+    if (m) await addBulletinPages();
     for (const p of packs) {
       addBriefingPages(out, F, p.B, p.meta);
+      await addBulletinPages();
       if (p.mapData) {
         const img = await renderRouteMap(p.mapData.routes, { title: p.mapData.title });
         if (img) await addMapPage(out, img, pdfText(`Marked chart · ${p.mapData.title} · 2-min marks at planned GS · HAT = heading, altitude, time`));
