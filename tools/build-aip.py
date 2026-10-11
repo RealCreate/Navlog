@@ -152,6 +152,26 @@ def vlim(val, uom, code, txt):
     return "SFC" if v == 0 else f"{int(v)} ft"
 
 
+import re
+
+
+def parse_level(txt):
+    """'SFC' → (0, False); 'FL095' → (9500, False); '5500ft AMSL' → (5500, False); '1000 ft AGL' → (1000, True).
+    Free text (e.g. CTA sectors) → (None, False)."""
+    if not txt:
+        return None, False
+    t = txt.upper().replace(" ", "")
+    if t in ("SFC", "GND"):
+        return 0, False
+    m = re.match(r"^FL(\d{2,3})", t)
+    if m:
+        return int(m.group(1)) * 100, False
+    m = re.match(r"^(\d{3,5})FT(AGL|GND|HGT)?", t)
+    if m:
+        return int(m.group(1)), bool(m.group(2))
+    return None, False
+
+
 airspaces = []
 for f in query(41, extra={"maxAllowableOffset": 0.002, "geometryPrecision": 4}):
     a, g = f["attributes"], f.get("geometry") or {}
@@ -161,14 +181,14 @@ for f in query(41, extra={"maxAllowableOffset": 0.002, "geometryPrecision": 4}):
     rings = [[[round(p[1], 4), round(p[0], 4)] for p in ring] for ring in g["rings"]]
     if not any(in_range(p[0], p[1]) for ring in rings for p in ring[:: max(1, len(ring) // 20)]):
         continue
+    lower_txt = (a.get("NIVEL_INF") or "").strip() or vlim(a.get("DISTVERTLOWER_VAL"), a.get("DISTVERTLOWER_UOM"), a.get("DISTVERTLOWER_CODE"), a.get("DISTVERTLOWER_TXT"))
+    upper_txt = (a.get("NIVEL_SUP") or "").strip() or vlim(a.get("DISTVERTUPPER_VAL"), a.get("DISTVERTUPPER_UOM"), a.get("DISTVERTUPPER_CODE"), a.get("DISTVERTUPPER_TXT"))
+    lo_ft, lo_agl = parse_level(lower_txt)
+    hi_ft, hi_agl = parse_level(upper_txt)
     airspaces.append({
         "type": t, "id": (a.get("IDENT_TXT") or "").strip(), "name": (a.get("NAME_TXT") or "").strip(),
-        "class": a.get("CLASS"),
-        "lower": vlim(a.get("DISTVERTLOWER_VAL"), a.get("DISTVERTLOWER_UOM"), a.get("DISTVERTLOWER_CODE"), a.get("DISTVERTLOWER_TXT")),
-        "upper": vlim(a.get("DISTVERTUPPER_VAL"), a.get("DISTVERTUPPER_UOM"), a.get("DISTVERTUPPER_CODE"), a.get("DISTVERTUPPER_TXT")),
-        "lowerFt": ft(a.get("DISTVERTLOWER_VAL"), "M" if (a.get("DISTVERTLOWER_UOM") or "").upper() == "M" else "FT") if (a.get("DISTVERTLOWER_UOM") or "").upper() != "FL" else (a.get("DISTVERTLOWER_VAL") or 0) * 100,
-        "upperFt": ft(a.get("DISTVERTUPPER_VAL"), "M" if (a.get("DISTVERTUPPER_UOM") or "").upper() == "M" else "FT") if (a.get("DISTVERTUPPER_UOM") or "").upper() != "FL" else (a.get("DISTVERTUPPER_VAL") or 0) * 100,
-        "agl": str(a.get("DISTVERTLOWER_CODE") or "").upper().startswith("HEI"),
+        "class": a.get("CLASS"), "lower": lower_txt, "upper": upper_txt,
+        "lowerFt": lo_ft, "upperFt": hi_ft, "agl": bool(lo_agl), "upperAgl": bool(hi_agl),
         "freq": a.get("FREQTRANS_VAL"), "hours": a.get("WORKHR_CODE"), "rmk": (a.get("REMARKS_TXT") or None),
         "rings": rings,
     })

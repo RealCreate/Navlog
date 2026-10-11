@@ -108,7 +108,9 @@ export function airspaceCrossings(legs, airspaces) {
       for (const sp of airspaces) {
         const bb = sp._bb;
         if (lat < bb.s || lat > bb.n || lon < bb.w || lon > bb.e) continue;
-        const lo = sp.agl ? 0 : (sp.lowerFt ?? 0), hi = sp.upperFt ?? 99999;
+        // AGL limits: lower treated as surface, upper with ~3000 ft of terrain (conservative)
+        const lo = sp.agl || sp.lowerFt == null ? 0 : sp.lowerFt;
+        const hi = sp.upperFt == null ? 99999 : sp.upperFt + (sp.upperAgl ? 3000 : 0);
         if (leg.alt != null && (leg.alt < lo - 100 || leg.alt > hi + 100)) continue;
         if (!inside(lat, lon, sp.rings)) continue;
         const key = sp.type + sp.id + sp.name;
@@ -121,7 +123,8 @@ export function airspaceCrossings(legs, airspaces) {
 
 export function crossingIssue({ sp, leg }) {
   const label = [sp.id, sp.name].filter(Boolean).join(' ') || sp.type;
-  const limits = `${sp.lower || 'SFC'}–${sp.upper || '?'}`;
+  const varies = sp.lowerFt == null && sp.lower && sp.lower.length > 12;
+  const limits = varies ? `lower limit varies by sector — check the chart, upper ${sp.upper || '?'}` : `${sp.lower || 'SFC'}–${sp.upper || '?'}`;
   const freq = sp.freq ? ` · ${sp.freq}` : '';
   switch (sp.type) {
     case 'P': case 'Prohibido_Sobrevuelo': case 'PROHIBIDO VFR':
@@ -131,7 +134,7 @@ export function crossingIssue({ sp, leg }) {
     case 'D':
       return { level: 'warn', text: `${leg}: crosses danger area ${label} (${limits}) — check activity (NOTAM)` };
     case 'CTR': case 'CTA': case 'TMA':
-      return { level: 'info', text: `${leg}: enters ${sp.type} ${label}${sp.class ? ' class ' + sp.class : ''} (${limits}) — clearance required${freq}` };
+      return { level: 'info', text: `${leg}: ${varies ? 'may enter' : 'enters'} ${sp.type} ${label}${sp.class ? ' class ' + sp.class : ''} (${limits}) — clearance required${freq}` };
     case 'FIZ': case 'ATZ': case 'RMZ': case 'TMZ':
       return { level: 'info', text: `${leg}: enters ${sp.type} ${label} (${limits}) — call before entering${freq}` };
     default:
