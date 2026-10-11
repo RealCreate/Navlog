@@ -1337,6 +1337,42 @@ function weatherIssues() {
 
 function copyBtn(id) { return `<div class="copy-row"><button class="btn small" data-copy="${id}">Copy</button></div>`; }
 
+/* ---------------- AEMET SIGWX and wind charts (ama.aemet.es, as linked by the school sites) ----------------
+ * Static images, loaded by the student's own browser (AEMET's server only answers from Spain).
+ *  SIGWX Spain low level: bbdd/imagenes/QGQE70LEMM{HHMM}________{YYYYMMDD}.png — issued 12 h before the
+ *    time it is valid for (00/06/12/18 UTC).
+ *  Wind/temperature: productos/atap/{run date}/HMAR/{00|12}/P3/{step}/VTPLOT_FL{020|050|100}__.1.png.
+ */
+const AMA = 'ama.aemet.es/o/estaticos';
+const ymd = (d) => `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}`;
+const hh = (d) => String(d.getUTCHours()).padStart(2, '0');
+function aemetCharts(t, altFt) {
+  const six = 6 * 3600e3;
+  const valid = new Date(Math.round(t.getTime() / six) * six);
+  const issue = new Date(valid.getTime() - 12 * 3600e3);
+  const sigwx = { label: `SIGWX low level · valid ${hh(valid)}Z ${valid.getUTCDate()}/${valid.getUTCMonth() + 1}`, urls: [`${AMA}/bbdd/imagenes/QGQE70LEMM${hh(issue)}00________${ymd(issue)}.png`] };
+  const fl = altFt >= 7500 ? '100' : altFt >= 3500 ? '050' : '020';
+  // newest run first (00/12 UTC), forecast step to the nearest 6 h
+  const urls = [];
+  const day = 864e5, now = Date.now();
+  for (let k = 0; k < 4; k++) {
+    const runT = Math.floor(now / (day / 2)) * (day / 2) - k * (day / 2);
+    if (runT > valid.getTime()) continue;
+    const run = new Date(runT), step = Math.round((valid.getTime() - runT) / 3600e3);
+    if (step > 48) continue;
+    urls.push(`${AMA}/productos/atap/${ymd(run)}/HMAR/${hh(run)}/P3/${String(step).padStart(3, '0')}/VTPLOT_FL${fl}__.1.png`);
+  }
+  const wind = { label: `Wind & temperature FL${fl} · valid ${hh(valid)}Z ${valid.getUTCDate()}/${valid.getUTCMonth() + 1}`, urls };
+  return { sigwx, wind };
+}
+const chartImg = (c) => c.urls.length ? `<figure class="wxchart"><img alt="${esc(c.label)}" loading="lazy" data-urls="${esc(JSON.stringify(c.urls))}" data-i="0" src="https://${c.urls[0]}" onerror="this.dataset.i=+this.dataset.i+1; const u=JSON.parse(this.dataset.urls); const i=+this.dataset.i; if (i < u.length * 2) this.src=(i % 2 ? 'http://' : 'https://') + u[Math.floor(i / 2)]; else this.closest('figure').classList.add('failed');"><figcaption>${esc(c.label)} · AEMET <a href="https://${c.urls[0]}" target="_blank" rel="noopener">open ↗</a></figcaption></figure>` : '';
+async function fetchChartBytes(c) {
+  for (const u of c.urls) for (const proto of ['https://', 'http://']) {
+    try { const r = await fetch(proto + u, { mode: 'cors' }); if (r.ok) return new Uint8Array(await r.arrayBuffer()); } catch { /* blocked or missing */ }
+  }
+  return null;
+}
+
 /* ---------------- ICARO NOTAM bulletin (saved PDF, added by the student) ---------------- */
 const BULLETIN_KEY = 'navlog.bulletin.v1';
 let bulletin = (() => { try { return JSON.parse(localStorage.getItem(BULLETIN_KEY)); } catch { return null; } })();
@@ -1447,7 +1483,10 @@ function renderBriefing() {
       ${w.metar ? `<div class="label" style="font-size:12px">${esc(metarSummary(w.metar))}${a.xw ? ` · best RWY ${a.xw.rwy}: crosswind ${a.xw.xw} kt` : ''}</div><div class="mono">${esc(w.metar.rawOb)}</div>` : '<div class="label">No METAR</div>'}
       ${w.taf ? `<div class="mono" style="margin-top:4px">${esc(w.taf.rawTAF)}</div>` : ''}</div>`;
   }
-  html += `</div><p class="note">${esc(B.limits)} Also brief surface pressure charts, SIGWX and wind charts (SOP briefing order). Source: aviationweather.gov.</p>`;
+  const cruise = parseAlt(result.main.rows.find((r) => r.phase === 'cruise')?.alt) || 5500;
+  const ch = aemetCharts(flightTime(), cruise);
+  html += `<div class="wx"><div class="wx-head"><b>SIGWX and wind chart</b><span class="label">AEMET · for your time</span></div><div class="wxcharts">${chartImg(ch.sigwx)}${chartImg(ch.wind)}</div></div>`;
+  html += `</div><p class="note">${esc(B.limits)} Also brief the surface pressure chart. Sources: aviationweather.gov, AEMET (charts load from Spain only; check the validity printed on each chart).</p>`;
 
   // 2. NOTAMs
   html += `<div class="group-title"><span>2 · NOTAMs</span></div><div class="group">
@@ -2202,7 +2241,8 @@ function legPack(fob) {
   const routes = [{ wps: clone(state.main.waypoints), rows: clone(result.main.rows), color: '#d1009a' }];
   if (state.alt.waypoints.length > 1) routes.push({ wps: clone(state.alt.waypoints), rows: clone(result.alt.rows), color: '#0a84ff', alt: true });
   const mapData = state.main.waypoints.length > 1 ? { routes, title: `${B.dep?.icao || ''} -> ${B.dest?.icao || ''}${B.alt ? ` (alternate ${B.alt.icao})` : ''}` } : null;
-  return { B, meta, sheets: result.main.rows.length ? sheets : null, mbArgs, mapData };
+  const cruise = parseAlt(result.main.rows.find((r) => r.phase === 'cruise')?.alt) || 5500;
+  return { B, meta, sheets: result.main.rows.length ? sheets : null, mbArgs, mapData, charts: aemetCharts(t, cruise) };
 }
 
 async function downloadBriefing() {
@@ -2243,12 +2283,23 @@ async function downloadBriefing() {
     } else {
       const p = legPack(); p.withMb = true; packs.push(p);
     }
-    let bulletinAdded = false;
+    let bulletinAdded = false, chartsMissing = false;
     const addBulletinPages = async () => { if (bulletin && !bulletinAdded) { bulletinAdded = true; await add(b64ToBytes(bulletin.b64)); } };
     if (m) await addBulletinPages();
     for (const p of packs) {
       addBriefingPages(out, F, p.B, p.meta);
       await addBulletinPages();
+      if (p.charts) for (const c of [p.charts.sigwx, p.charts.wind]) {
+        const bytes = await fetchChartBytes(c);
+        if (!bytes) { chartsMissing = true; continue; }
+        try {
+          const img = await out.embedPng(bytes);
+          const pg = out.addPage([841.89, 595.28]);
+          const k = Math.min(801 / img.width, 540 / img.height);
+          pg.drawImage(img, { x: (841.89 - img.width * k) / 2, y: 18, width: img.width * k, height: img.height * k });
+          pg.drawText(pdfText(`${c.label} · AEMET`), { x: 20, y: 570, size: 11, font: F.bold });
+        } catch { chartsMissing = true; }
+      }
       if (p.mapData) {
         const img = await renderRouteMap(p.mapData.routes, { title: p.mapData.title });
         if (img) await addMapPage(out, img, pdfText(`Marked chart · ${p.mapData.title} · 2-min marks at planned GS · HAT = heading, altitude, time`));
@@ -2260,7 +2311,7 @@ async function downloadBriefing() {
     out.setTitle(m ? 'Mission briefing' : 'Flight briefing');
     const d = flightTime().toISOString().slice(0, 10);
     saveBlob(await out.save(), m ? `Briefing_Mission_${d}.pdf` : `Briefing_${endpoint('main', 0)?.icao || ''}-${endpoint('main', -1)?.icao || ''}_${d}.pdf`);
-    toast('Briefing PDF ready');
+    toast(chartsMissing ? 'Briefing PDF ready — the AEMET charts could not be added (open them from the Briefing tab)' : 'Briefing PDF ready');
   } catch (err) { console.error(err); toast('Could not build the briefing: ' + err.message); }
   finally { wxState = keepWx; }
 }
