@@ -14,7 +14,7 @@ x0, y0 = tile(W, N, Z); x1, y1 = tile(E, S, Z)
 tx0, ty0, tx1, ty1 = int(x0), int(y0), int(x1), int(y1)
 cols, rows = tx1 - tx0 + 1, ty1 - ty0 + 1
 elev = np.zeros((rows * 256, cols * 256), dtype=np.float32)
-for ty in range(ty0, ty1 + 1):
+for ty in ([] if os.environ.get('NODEM') else range(ty0, ty1 + 1)):
     for tx in range(tx0, tx1 + 1):
         u = f'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{Z}/{tx}/{ty}.png'
         a = np.asarray(Image.open(io.BytesIO(urllib.request.urlopen(u, timeout=60).read())).convert('RGB')).astype(np.float32)
@@ -37,8 +37,9 @@ node["place"~"^(city|town)$"]({S},{W},{N},{E});
 node["place"="village"]["population"]({S},{W},{N},{E});
 way["landuse"="residential"]["name"]({S},{W},{N},{E});
 );out geom;"""
-for host in ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter']:
+for host in ['https://overpass.private.coffee/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter', 'https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter']:
     try:
-        r = urllib.request.urlopen(host, data=urllib.parse.urlencode({'data': q}).encode(), timeout=180).read()
+        req = urllib.request.Request(host, data=urllib.parse.urlencode({'data': q}).encode(), headers={'User-Agent': 'navlog-chart-mock/1.0 (github.com/RealCreate/Navlog)'})
+        r = urllib.request.urlopen(req, timeout=180).read()
         open(f'{out}/osm.json', 'wb').write(r); print('osm', len(r)); break
     except Exception as e: print('overpass fail', host, e)
