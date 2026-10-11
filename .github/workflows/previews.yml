@@ -18,27 +18,20 @@ jobs:
           path: src
       - name: AIP data
         run: mkdir -p out && python3 src/tools/build-aip.py out/aip.json || true
-      - name: Render previews
+      - name: Probe
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq gdal-bin
-          curl -fsSL https://aip.enaire.es/AIP/CartasInsigniaImpresas-es.html -o page.html
+          sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils
           mkdir -p out
-          for sheet in ${SHEETS:-}; do
-            path=$(grep -oiE "recursos/descargas/VFR500/[0-9]{4}_${sheet}\.zip" page.html | head -1)
-            curl -fsSL "https://aip.enaire.es/$path" -o "$sheet.zip"
-            mkdir -p "$sheet" && unzip -q "$sheet.zip" -d "$sheet"
-            tif=$(find "$sheet" -iname '*.tif*' | head -1)
-            gdalinfo "$tif" | grep -vE '^\s+[0-9]+: ' > "out/$sheet-gdalinfo.txt"
-            opts=""; gdalinfo "$tif" | grep -q 'Color Table' && opts="-expand rgb"
-            gdal_translate -q $opts -of PNG -outsize 1400 0 "$tif" "out/$sheet.png"
-            # Burgos area (lon/lat window), full resolution
-            gdalwarp -q -t_srs EPSG:4326 -te -4.3 41.9 -3.0 42.8 -ts 1300 0 "$tif" "out/$sheet-burgos.tif"
-            gdal_translate -q $opts -of PNG "out/$sheet-burgos.tif" "out/$sheet-burgos.png" && rm "out/$sheet-burgos.tif"
+          for ad in LEPP LESO LEXJ LEHC LESA; do
+            for n in 1 2 3; do
+              curl -fsSL "https://aip.enaire.es/AIP/contenido_AIP/AD/AD2/$ad/LE_AD_2_${ad}_VAC_${n}_en.pdf" -o "$ad-vac$n.pdf" && pdftoppm -r 150 -png "$ad-vac$n.pdf" "out/$ad-vac$n" && pdftotext -layout "$ad-vac$n.pdf" "out/$ad-vac$n.txt" || true
+            done
           done
-          sudo apt-get install -y -qq poppler-utils
-          for ad in LEBG LERJ; do
-            curl -fsSL "https://aip.enaire.es/AIP/contenido_AIP/AD/AD2/$ad/LE_AD_2_${ad}_VAC_1_en.pdf" -o "$ad-vac.pdf" && pdftoppm -r 130 -png "$ad-vac.pdf" "out/$ad-vac" || true
+          for ad in LEBG LERJ LEVT LEVD LELN LEPP LESO LEXJ LEHC LESA; do
+            curl -fsSL "https://aip.enaire.es/AIP/contenido_AIP/AD/AD2/$ad/LE_AD_2_${ad}_en.pdf" -o "$ad-ad2.pdf" && pdftotext -layout "$ad-ad2.pdf" "out/$ad-ad2.txt" || echo "fail $ad" >> out/fail.txt
           done
+          curl -sS -D out/aemet-headers.txt -H "Origin: https://realcreate.github.io" "https://opendata.aemet.es/opendata/api/mapasygraficos/analisis" -o out/aemet-body.txt || true
+          curl -sS -X OPTIONS -D out/aemet-options.txt -H "Origin: https://realcreate.github.io" -H "Access-Control-Request-Method: GET" -H "Access-Control-Request-Headers: api_key" "https://opendata.aemet.es/opendata/api/mapasygraficos/analisis" -o /dev/null || true
           ls -la out
       - name: Publish to previews branch
         run: |
