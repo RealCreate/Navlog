@@ -1237,33 +1237,6 @@ function weatherIssues() {
 
 function copyBtn(id) { return `<div class="copy-row"><button class="btn small" data-copy="${id}">Copy</button></div>`; }
 
-// NOTAM copy fetched in CI every 3 h (data/notams.json). Shown for the flight window ±1 h;
-// ICARO stays the official source and is linked above.
-let notamData = null;
-fetch('data/notams.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : null)).then((d) => { notamData = d; if (tab === 'brief') renderPanels(); }).catch(() => {});
-function notamTime(v) {
-  if (!v || /PERM/i.test(v)) return null;
-  let m = String(v).match(/^(\d{2})\/(\d{2})\/(\d{4})\s*(\d{2})(\d{2})/); // MM/DD/YYYY HHMM (UTC)
-  if (m) return Date.UTC(+m[3], +m[1] - 1, +m[2], +m[4], +m[5]);
-  m = String(v).match(/^(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})/); // YYMMDDHHMM
-  if (m) return Date.UTC(2000 + +m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
-  const t = Date.parse(v); return Number.isFinite(t) ? t : null;
-}
-function notamHtml(ads) {
-  if (!notamData || !notamData.ok || !notamData.notams) return '<div class="row"><span class="grow label">Automatic NOTAM copy not available — read them on ICARO.</span></div>';
-  const t0 = flightTime().getTime() - 3600e3, t1 = flightTime().getTime() + ((result?.main.totals.timeSec || 0) + 3600) * 1000;
-  let html = '';
-  for (const ad of ads) {
-    const list = (notamData.notams[ad] || []).filter((n) => { const a = notamTime(n.from), b = notamTime(n.to); return (a == null || a <= t1) && (b == null || b >= t0); });
-    const key = (n) => /\bAD\b.*\bCLSD\b|\bRWY\b.*\bCLSD\b|CLOSED|\bU\/S\b|UNSERVICEABLE|NOT AVBL|FUEL|AVGAS|\bCLSD\b/i.test(n.text);
-    html += `<div class="wx"><div class="wx-head"><b>${ad}</b><span class="label">${list.length} active for your flight</span>${list.some(key) ? '<span class="badge warn">CHECK</span>' : ''}</div>`;
-    html += list.length ? list.map((n) => `<div class="mono${key(n) ? ' warn' : ''}" style="margin-top:4px">${esc(n.text)}</div>`).join('') : '<div class="label">No NOTAMs in the copy for your time.</div>';
-    html += '</div>';
-  }
-  html += `<div class="row"><span class="grow label">Copy from ${esc(notamData.source || 'FAA NOTAM Search')}, fetched ${esc(notamData.fetched || '')} — confirm on ICARO before flight.</span></div>`;
-  return html;
-}
-
 function renderBriefing() {
   const f = state.flight;
   const dep = endpoint('main', 0), dest = endpoint('main', -1), alt = endpoint('alt', -1);
@@ -1302,7 +1275,6 @@ function renderBriefing() {
   html += `<div class="group-title"><span>2 · NOTAMs</span></div><div class="group">
     <div class="row"><span class="grow">Aerodromes: ${notamAds.join(', ') || '—'} — check every alternate individually</span><a class="btn small" href="https://notampib.enaire.es/icaro" target="_blank" rel="noopener">ICARO ↗</a></div>
     <div class="row"><span class="grow">En-route NOTAMs (Phase 3 manual)</span><a class="btn small" href="https://insigniavfr.enaire.es" target="_blank" rel="noopener">Insignia VFR ↗</a></div>`;
-  html += notamHtml(notamAds);
   html += '</div>';
 
   // 3. ATC flight plan

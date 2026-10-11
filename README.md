@@ -15,7 +15,7 @@ Live: https://realcreate.github.io/Navlog/ (installable on iPad: Share → Add t
   WCA/MH, distance leg/remaining, GS, ETE, fuel/remaining, with automatic TOC/TOD rows.
 - Date & time slider for the flight, with sunrise/sunset and landing-time check.
 - Main route + alternate route, fuel policy check, mass & balance for every fleet type on its own sheet (P2008, P2002, P-Mentor, PS-28, C172N, C172RG, PA-28-181, P2006T/NG).
-- Times in UTC with local time in brackets; NOTAM copy refreshed every 3 hours (confirm on ICARO).
+- Times in UTC with local time in brackets.
 - **Navlog PDF** fills the school's "Visual Operational Flight Plan" form.
 - Works offline after loading; "Save chart for offline" caches the chart around the route.
 
