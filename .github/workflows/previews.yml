@@ -18,28 +18,17 @@ jobs:
           path: src
       - name: AIP data
         run: mkdir -p out && python3 src/tools/build-aip.py out/aip.json || true
-      - name: Render previews
+      - name: Probe AEMET
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq gdal-bin
-          curl -fsSL https://aip.enaire.es/AIP/CartasInsigniaImpresas-es.html -o page.html
           mkdir -p out
-          for sheet in ${SHEETS:-}; do
-            path=$(grep -oiE "recursos/descargas/VFR500/[0-9]{4}_${sheet}\.zip" page.html | head -1)
-            curl -fsSL "https://aip.enaire.es/$path" -o "$sheet.zip"
-            mkdir -p "$sheet" && unzip -q "$sheet.zip" -d "$sheet"
-            tif=$(find "$sheet" -iname '*.tif*' | head -1)
-            gdalinfo "$tif" | grep -vE '^\s+[0-9]+: ' > "out/$sheet-gdalinfo.txt"
-            opts=""; gdalinfo "$tif" | grep -q 'Color Table' && opts="-expand rgb"
-            gdal_translate -q $opts -of PNG -outsize 1400 0 "$tif" "out/$sheet.png"
-            # Burgos area (lon/lat window), full resolution
-            gdalwarp -q -t_srs EPSG:4326 -te -4.3 41.9 -3.0 42.8 -ts 1300 0 "$tif" "out/$sheet-burgos.tif"
-            gdal_translate -q $opts -of PNG "out/$sheet-burgos.tif" "out/$sheet-burgos.png" && rm "out/$sheet-burgos.tif"
+          UA='Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15'
+          for u in 'https://opendata.aemet.es/opendata/api/mapasygraficos/analisis' \
+                   'https://ama.aemet.es/en' \
+                   'https://www.aemet.es/es/eltiempo/prediccion/aviacion' \
+                   'https://aviationweather.gov/data/products/swl/ll_12_cl_new.gif' ; do
+            code=$(curl -s --max-time 20 -o /dev/null -w '%{http_code}' -A "$UA" -L "$u" || true); echo "$code $u" | tee -a out/probe.txt
           done
-          sudo apt-get install -y -qq poppler-utils
-          for ad in LEBG LERJ; do
-            curl -fsSL "https://aip.enaire.es/AIP/contenido_AIP/AD/AD2/$ad/LE_AD_2_${ad}_VAC_1_en.pdf" -o "$ad-vac.pdf" && pdftoppm -r 130 -png "$ad-vac.pdf" "out/$ad-vac" || true
-          done
-          ls -la out
+          curl -s --max-time 20 -A "$UA" 'https://opendata.aemet.es/opendata/api/mapasygraficos/analisis' | head -c 400 > out/aemet-nokey.txt || true
       - name: Publish to previews branch
         run: |
           cd out
