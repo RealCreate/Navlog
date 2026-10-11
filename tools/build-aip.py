@@ -24,11 +24,11 @@ def in_range(lat, lon):
     return any(nm((lat, lon), c) <= RANGE_NM for c in CENTRES.values())
 
 
-def query(layer, where="1=1", fields="*"):
+def query(layer, where="1=1", fields="*", extra=None):
     out, offset = [], 0
     while True:
         params = {
-            "where": where, "outFields": fields, "outSR": 4326, "f": "json",
+            "where": where, "outFields": fields, "outSR": 4326, "f": "json", **(extra or {}),
             "geometry": ",".join(map(str, BBOX)), "geometryType": "esriGeometryEnvelope", "inSR": 4326,
             "spatialRel": "esriSpatialRelIntersects", "resultOffset": offset, "resultRecordCount": 1000,
         }
@@ -130,7 +130,51 @@ for f in query(29):
     })
 print(f"{len(routes)} VFR routes", file=sys.stderr)
 
-json.dump({"source": BASE, "built": time.strftime("%Y-%m-%d"), "aerodromes": ads, "vrps": vrps, "routes": routes},
+# Airspaces: restricted / danger / prohibited areas and controlled or information zones,
+# simplified for the map and for route-crossing checks.
+KEEP = {"R", "D", "P", "TSA", "TRA", "CTR", "CTA", "TMA", "FIZ", "ATZ", "RMZ", "TMZ", "Prohibido_Sobrevuelo", "PROHIBIDO VFR"}
+
+
+def vlim(val, uom, code, txt):
+    if txt and str(txt).strip():
+        return str(txt).strip()
+    if val is None:
+        return None
+    uom = (uom or "").upper()
+    try:
+        v = float(val)
+    except (TypeError, ValueError):
+        return str(val)
+    if uom == "FL":
+        return f"FL{int(v):03d}"
+    if code and str(code).upper().startswith("HEI") or str(code).upper() == "SFC":
+        return "SFC" if v == 0 else f"{int(v)} ft AGL"
+    return "SFC" if v == 0 else f"{int(v)} ft"
+
+
+airspaces = []
+for f in query(41, extra={"maxAllowableOffset": 0.002, "geometryPrecision": 4}):
+    a, g = f["attributes"], f.get("geometry") or {}
+    t = (a.get("TYPE_CODE") or "").strip()
+    if t not in KEEP or not g.get("rings"):
+        continue
+    rings = [[[round(p[1], 4), round(p[0], 4)] for p in ring] for ring in g["rings"]]
+    if not any(in_range(p[0], p[1]) for ring in rings for p in ring[:: max(1, len(ring) // 20)]):
+        continue
+    airspaces.append({
+        "type": t, "id": (a.get("IDENT_TXT") or "").strip(), "name": (a.get("NAME_TXT") or "").strip(),
+        "class": a.get("CLASS"),
+        "lower": vlim(a.get("DISTVERTLOWER_VAL"), a.get("DISTVERTLOWER_UOM"), a.get("DISTVERTLOWER_CODE"), a.get("DISTVERTLOWER_TXT")),
+        "upper": vlim(a.get("DISTVERTUPPER_VAL"), a.get("DISTVERTUPPER_UOM"), a.get("DISTVERTUPPER_CODE"), a.get("DISTVERTUPPER_TXT")),
+        "lowerFt": ft(a.get("DISTVERTLOWER_VAL"), "M" if (a.get("DISTVERTLOWER_UOM") or "").upper() == "M" else "FT") if (a.get("DISTVERTLOWER_UOM") or "").upper() != "FL" else (a.get("DISTVERTLOWER_VAL") or 0) * 100,
+        "upperFt": ft(a.get("DISTVERTUPPER_VAL"), "M" if (a.get("DISTVERTUPPER_UOM") or "").upper() == "M" else "FT") if (a.get("DISTVERTUPPER_UOM") or "").upper() != "FL" else (a.get("DISTVERTUPPER_VAL") or 0) * 100,
+        "agl": str(a.get("DISTVERTLOWER_CODE") or "").upper().startswith("HEI"),
+        "freq": a.get("FREQTRANS_VAL"), "hours": a.get("WORKHR_CODE"), "rmk": (a.get("REMARKS_TXT") or None),
+        "rings": rings,
+    })
+print(f"{len(airspaces)} airspaces", file=sys.stderr)
+
+json.dump({"source": BASE, "built": time.strftime("%Y-%m-%d"), "aerodromes": ads, "vrps": vrps, "routes": routes, "airspaces": airspaces},
           open(OUT, "w", encoding="utf-8"), ensure_ascii=False, separators=(",", ":"))
 print(f"wrote {OUT}")
 if len(ads) < 5:

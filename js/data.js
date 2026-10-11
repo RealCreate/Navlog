@@ -239,3 +239,17 @@ export function procedureFor(adIcao, vrpId, kind) {
   const lim = vacRouteAltitude(adIcao, v, kind);
   return { points: [vrpId], alt: lim ? lim.alt : null, source: lim ? lim.text : 'Check the VAC for routes and altitudes' };
 }
+
+// Fleet by type (FlyBy fleet M&B overview, updated 19/07/2025). Only types whose M&B sheet
+// has been set up can be calculated; the others are listed so the right type can be chosen.
+export const FLEET_TYPES = [
+  { id: 'P2008', name: 'Tecnam P2008 JC', icao: 'P208', mb: true, xwind: { fi: 15, solo: 10 }, regs: Object.keys(FLEET.P2008.regs) },
+  { id: 'PS28', name: 'PS-28 Cruiser', icao: 'CRUZ', mb: false, regs: ['EC-NAO', 'EC-NAP', 'EC-NCO', 'EC-NCP', 'EC-NCQ', 'EC-NIM', 'EC-NIN', 'EC-NLF', 'EC-NLG', 'EC-NPM', 'EC-OIY', 'EC-OIZ'] },
+  { id: 'P2002', name: 'Tecnam P2002 JF', icao: 'P2002', mb: false, regs: ['EC-MOH', 'EC-MOI', 'EC-MOJ'] },
+  { id: 'PMENTOR', name: 'Tecnam P-Mentor', icao: 'PMEN', mb: false, regs: ['EC-OCF', 'EC-OCG'] },
+  { id: 'C172', name: 'Cessna 172', icao: 'C172', mb: false, regs: ['EC-NSB', 'EC-IOG', 'EC-IDJ'] },
+  { id: 'C172RG', name: 'Cessna 172 RG', icao: 'C72R', mb: false, regs: [] },
+  { id: 'PA28', name: 'Piper PA-28-181', icao: 'P28A', mb: false, regs: ['EC-JFE'] },
+  { id: 'P2006', name: 'Tecnam P2006T', icao: 'P2006', mb: false, regs: ['I-CHAU', 'EC-LIF', 'EC-NKF', 'EC-OON', 'EC-OPL'] },
+];
+export const fleetType = (id) => FLEET_TYPES.find((t) => t.id === id) || FLEET_TYPES[0];

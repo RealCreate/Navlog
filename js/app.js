@@ -1,14 +1,19 @@
-import { AERODROMES, POINTS, FLEET, SOP, adByIcao, mergeAip, procedureFor, PROCEDURES } from './data.js';
+import { AERODROMES, POINTS, FLEET, FLEET_TYPES, fleetType, SOP, adByIcao, mergeAip, procedureFor, PROCEDURES } from './data.js';
 import { computeNavlog, fuelPolicy, massBalance, fmtMMSS, fmtHMS, fmtVar, fmtAlt, parseAlt, cruiseTas, distanceNm, midpoint } from './nav.js';
 import { buildNavlogPdf, buildMbPdf } from './pdf.js';
 import { sampleTerrain, plannedProfile, drawProfile } from './profile.js';
 import { PlacesLayer } from './places.js';
+import { fetchWinds } from './winds.js';
+import { fetchWeather, assess, metarSummary } from './weather.js';
+import { APPROVED, IFR_ONLY, EASY_FIRST, FULL_STOP, CLOSING_LOCAL, NO_REFUEL, FREQS, aerodromeOpen, airspaceCrossings, crossingIssue, buildFpl, departureBriefing, arrivalBriefing, temThreats } from './rules.js';
+import { listPlans, savePlan, deletePlan, getPlan, planFromPdf } from './plans.js';
 import { sunTimes } from './sun.js';
 
 const L = window.L;
 const LEBG = adByIcao('LEBG');
 const STORE = 'navlog.v1';
-const STEP_MIN = 15;
+const STEP_MIN = 5; // slider steps of 5 minutes
+const MAX_DAYS = 3; // plan at most 3 days ahead
 const AC = FLEET.P2008;
 
 /* ---------------- State ---------------- */
@@ -18,8 +23,12 @@ const defaultState = () => ({
   alt: { waypoints: [], stdDep: false, stdArr: false },
   active: 'main',
   time: null,
-  flight: { callsign: '', reg: 'EC-ODX', pilot: '', copilot: '', baggage: 0, fob: AC.fuelCapacity, taxi: '', extra: 0, weather: '' },
-  view: { base: 'vfr', points: true, marks: true, names: true, profile: true },
+  flight: { callsign: '', type: 'P2008', reg: 'EC-ODX', pilot: '', copilot: '', baggage: 0, fob: AC.fuelCapacity, taxi: '', extra: 0, weather: '', solo: false, pob: 2, lowCloud: false },
+  view: { base: 'vfr', points: true, marks: true, names: true, profile: true, winds: true, panel: true },
+  unlocked: ['LEBG', 'LERJ'],
+  tem: {},
+  windSource: null,
+  planId: null,
   mb: { studentCode: '', notams: '', tripSource: 'route', tripManual: '', altManual: '' },
   mode: 'plan',
 });
@@ -35,7 +44,7 @@ function adWaypoint(ad) {
 function load() {
   try {
     const s = JSON.parse(localStorage.getItem(STORE));
-    if (s && s.main) { const d = defaultState(); return { ...d, ...s, flight: { ...d.flight, ...s.flight }, view: { ...d.view, ...s.view }, mb: { ...d.mb, ...s.mb } }; }
+    if (s && s.main) { const d = defaultState(); return { ...d, ...s, flight: { ...d.flight, ...s.flight }, view: { ...d.view, ...s.view }, mb: { ...d.mb, ...s.mb }, unlocked: s.unlocked || d.unlocked, tem: s.tem || {} }; }
   } catch { /* first run or storage blocked */ }
   return defaultState();
 }
@@ -64,7 +73,10 @@ function defaultTime() {
   return t;
 }
 function flightTime() {
-  return state.time ? new Date(state.time) : defaultTime();
+  if (!state.time) return defaultTime();
+  const t = new Date(state.time);
+  // an old saved time in the past snaps to the nearest valid time
+  return t < base ? defaultTime() : t;
 }
 function syncSlider() {
   const t = flightTime();
@@ -73,6 +85,16 @@ function syncSlider() {
   slider.value = v;
   slider.style.setProperty('--p', `${(v / slider.max) * 100}%`);
 }
+slider.max = (MAX_DAYS * 24 * 60) / STEP_MIN;
+function setTime(t) {
+  const min = base.getTime(), max = base.getTime() + MAX_DAYS * 864e5;
+  t = new Date(Math.min(max, Math.max(min, t.getTime())));
+  t.setSeconds(0, 0); t.setMinutes(Math.round(t.getMinutes() / STEP_MIN) * STEP_MIN);
+  state.time = t.toISOString();
+  syncSlider();
+}
+document.getElementById('timeMinus').addEventListener('click', () => { setTime(new Date(flightTime().getTime() - STEP_MIN * 60e3)); update(); });
+document.getElementById('timePlus').addEventListener('click', () => { setTime(new Date(flightTime().getTime() + STEP_MIN * 60e3)); update(); });
 slider.addEventListener('input', () => {
   state.time = new Date(base.getTime() + slider.value * STEP_MIN * 60e3).toISOString();
   slider.style.setProperty('--p', `${(slider.value / slider.max) * 100}%`);
@@ -91,8 +113,9 @@ document.getElementById('timeLabel').addEventListener('click', () => {
 });
 picker.addEventListener('change', () => {
   if (!picker.value) return;
-  state.time = new Date(picker.value).toISOString();
-  syncSlider();
+  const t = new Date(picker.value);
+  if (t > new Date(base.getTime() + MAX_DAYS * 864e5)) toast(`Plans can be made up to ${MAX_DAYS} days ahead`);
+  setTime(t);
   update();
 });
 
@@ -103,7 +126,7 @@ const zFmt = (d) => `${String(d.getUTCHours()).padStart(2, '0')}${String(d.getUT
 function renderTime() {
   const t = flightTime();
   document.getElementById('timeMain').textContent = `${dFmt.format(t)} · ${tFmt.format(t)} LT`;
-  document.getElementById('timeSub').textContent = `Takeoff ${zFmt(t)}`;
+  document.getElementById('timeSub').textContent = `T/O ${zFmt(t)}`;
   const dep = state.main.waypoints[0] || { lat: LEBG.lat, lon: LEBG.lon };
   const { rise, set } = sunTimes(t, dep.lat, dep.lon);
   const total = result ? result.main.totals.timeSec : 0;
@@ -111,9 +134,7 @@ function renderTime() {
   const parts = [];
   if (rise) parts.push(`<span class="${t < rise ? 'warn' : ''}">SR ${zFmt(rise)}</span>`);
   if (set) parts.push(`<span class="${ldg > set ? 'warn' : ''}">SS ${zFmt(set)}</span>`);
-  if (total) parts.push(`<span class="${set && ldg > set ? 'warn' : ''}">Ldg ≈ ${zFmt(ldg)}</span>`);
-  if (set && ldg > set) parts.push('<span class="warn">Landing after sunset</span>');
-  else if (rise && t < rise) parts.push('<span class="warn">Before sunrise</span>');
+  if (total) parts.push(`<span class="${set && ldg > set ? 'warn' : ''}">Ldg ${zFmt(ldg)}</span>`);
   document.getElementById('sunRow').innerHTML = parts.join('');
 }
 
@@ -188,7 +209,9 @@ let lastZ = map.getZoom();
 map.on('zoomend', () => { const z = map.getZoom(); if ((z >= 9) !== (lastZ >= 9)) buildPoints(); lastZ = z; });
 
 // Every aerodrome, VRP and VFR route within 200 NM of LEBG / LERJ (AIP, built weekly in CI)
+let AIRSPACES = [];
 fetch('data/aip.json').then((r) => (r.ok ? r.json() : null)).then((aip) => {
+  if (aip && aip.airspaces) AIRSPACES = aip.airspaces;
   if (mergeAip(aip)) { buildPoints(); update({ rerenderPanels: true }); }
 }).catch(() => {});
 
@@ -196,8 +219,10 @@ const routeLayer = L.layerGroup().addTo(map);
 
 // Town and village names (GeoNames)
 let placesLayer = null;
+let placesData = [];
 fetch('data/places.json').then((r) => (r.ok ? r.json() : [])).then((places) => {
   if (!places.length) return;
+  placesData = places;
   placesLayer = new PlacesLayer(places);
   togglePlaces();
 }).catch(() => {});
@@ -207,22 +232,50 @@ function togglePlaces() {
 }
 let selectedId = null;
 
+// Snapping (Phase 2: choose large, distinctive references). Aerodromes and VRPs win over
+// towns; towns only snap when their name is shown at this zoom level.
+const SNAP_PX = 20;
 function nearestRef(latlng) {
   const pt = map.latLngToContainerPoint(latlng);
-  let best = null, bestD = 22;
+  let best = null, bestD = SNAP_PX;
   for (const p of POINTS) {
+    if (p.type === 'vrp' && map.getZoom() < 9) continue;
     const d = pt.distanceTo(map.latLngToContainerPoint([p.lat, p.lon]));
     if (d < bestD) { bestD = d; best = p; }
+  }
+  if (best || !state.view.names) return best;
+  const z = map.getZoom(), minZ = [6, 8, 10];
+  bestD = SNAP_PX;
+  for (const [name, lat, lon, rank] of placesData) {
+    if (z < minZ[rank]) continue;
+    if (Math.abs(lat - latlng.lat) > 0.2 || Math.abs(lon - latlng.lng) > 0.3) continue;
+    const d = pt.distanceTo(map.latLngToContainerPoint([lat, lon]));
+    if (d < bestD) { bestD = d; best = { key: `town:${name}:${lat}`, type: 'town', label: name, sub: ['City', 'Town', 'Village'][rank], lat, lon }; }
   }
   return best;
 }
 
+// Live highlight of the feature a dragged point will snap to.
+let snapHint = null;
+function showSnapHint(ref) {
+  if (snapHint) { routeLayer.removeLayer(snapHint); snapHint = null; }
+  if (!ref) return;
+  snapHint = L.marker([ref.lat, ref.lon], { pane: 'marks', interactive: false, icon: L.divIcon({ className: '', iconSize: [0, 0], html: `<div class="snap-ring"></div><span class="snap-label">${ref.type === 'town' ? ref.label : refName(ref)}</span>` }) }).addTo(routeLayer);
+}
+
 function refName(p) {
+  if (p.type === 'town') return p.label;
   return p.type === 'ad' ? p.label : p.label.split(' ')[0] + (p.ad === 'LEBG' ? '' : ` (${p.ad})`);
 }
 
+// Magnetic variation for a free point: from the nearest hand-checked VAC value (LEBG, LEVT, LERJ),
+// otherwise the nearest aerodrome's AIP value.
 function defaultVar(lat, lon) {
-  let best = AERODROMES[0], bd = Infinity;
+  const curated = AERODROMES.filter((a) => a.freq && a.vrps && ['LEBG', 'LEVT', 'LERJ'].includes(a.icao));
+  let best = null, bd = Infinity;
+  for (const a of curated) { const d = distanceNm(a, { lat, lon }); if (d < bd) { bd = d; best = a; } }
+  if (best && bd < 60) return best.var;
+  best = AERODROMES[0]; bd = Infinity;
   for (const a of AERODROMES) { const d = distanceNm(a, { lat, lon }); if (d < bd) { bd = d; best = a; } }
   return best.var;
 }
@@ -238,10 +291,11 @@ function newWaypoint(lat, lon, ref) {
   const wp = {
     id: ++uid, lat, lon,
     name: ref ? refName(ref) : `WPT ${r.waypoints.length}`,
-    ref: ref ? ref.key : null,
+    ref: ref && ref.type !== 'town' ? ref.key : null,
+    town: ref && ref.type === 'town' ? ref.label : undefined,
     alt: lastCruiseAlt(r.waypoints),
     wdir: prev ? prev.wdir || '' : '', wspd: prev ? prev.wspd || '' : '',
-    var: ref ? adByIcao(ref.ad).var : defaultVar(lat, lon),
+    var: ref && ref.ad ? adByIcao(ref.ad).var : defaultVar(lat, lon),
   };
   return wp;
 }
@@ -258,7 +312,12 @@ function addPoint(ref) {
 
   // Leaving the departure aerodrome via one of its reporting points: follow the published route.
   if (isStart && firstAd && ref.type === 'vrp' && ref.ad === firstAd.icao) {
-    const proc = procedureFor(firstAd.icao, ref.id, 'dep');
+    let proc = procedureFor(firstAd.icao, ref.id, 'dep');
+    if (proc && state.flight.lowCloud && firstAd.icao === 'LEBG') {
+      // SOP2507 low-cloud special operation: leave via S, W or N only, direct to the point at 4500 ft
+      if (ref.id === 'E' || ref.id === 'E-1') toast('Low-cloud procedure: E point is not used — leave via S, W or N');
+      proc = { ...proc, points: [ref.id], alt: 4500, source: 'LEBG low-cloud procedure (SOP2507)' };
+    }
     if (proc) {
       for (const id of proc.points) {
         const p = vrpRef(firstAd.icao, id); if (!p) continue;
@@ -280,6 +339,7 @@ function addPoint(ref) {
     const lastRef = last && last.ref && POINTS.find((p) => p.key === last.ref);
     if (lastRef && lastRef.type === 'vrp' && lastRef.ad === ad.icao) {
       const proc = procedureFor(ad.icao, lastRef.id, 'arr');
+      if (proc && state.flight.lowCloud && ad.icao === 'LEBG' && lastRef.id === 'E') toast('Low-cloud procedure: E point is not used — enter via N, W or S–E-1 at 4000 ft');
       if (proc) {
         if (proc.alt) last.alt = proc.alt; // established at the procedure altitude over the entry point
         for (const id of proc.points.slice(1)) {
@@ -303,6 +363,7 @@ function addPoint(ref) {
   const wp = newWaypoint(ref.lat, ref.lon, ref);
   wps.push(wp);
   if (ref.type !== 'ad') toast(`Added ${refName(ref)} · ${ref.sub}`);
+  if (ref.type === 'ad' && ref.ad !== firstAd?.icao) checkApproved(ref.ad);
   haptic();
   update({ rerenderPanels: true });
 }
@@ -315,6 +376,7 @@ function seedAlternate() {
 map.on('click', (e) => {
   const ref = nearestRef(e.latlng);
   if (ref) return addPoint(ref);
+  if (!layersPop.hidden || !plansPop.hidden) return; // tap outside a menu just closes it
   const r = route();
   if (!r.waypoints.length && state.active === 'alt') seedAlternate();
   const wp = newWaypoint(e.latlng.lat, e.latlng.lng, null);
@@ -373,10 +435,11 @@ function drawRoutes() {
       }).addTo(routeLayer);
       let ghost = null;
       h.on('dragstart', () => { ghost = L.polyline([], { pane: 'routes', color, weight: 3, dashArray: '4 6' }).addTo(routeLayer); });
-      h.on('drag', (e) => { ghost.setLatLngs([[wps[i - 1].lat, wps[i - 1].lon], e.target.getLatLng(), [wps[i].lat, wps[i].lon]]); });
+      h.on('drag', (e) => { ghost.setLatLngs([[wps[i - 1].lat, wps[i - 1].lon], e.target.getLatLng(), [wps[i].lat, wps[i].lon]]); showSnapHint(nearestRef(e.target.getLatLng())); });
       h.on('dragend', (e) => {
         const ll = e.target.getLatLng();
         const ref = nearestRef(ll);
+        showSnapHint(null);
         const wp = newWaypoint(ref ? ref.lat : ll.lat, ref ? ref.lon : ll.lng, ref);
         wp.alt = wps[i].alt; wp.wdir = wps[i].wdir; wp.wspd = wps[i].wspd;
         wps.splice(i, 0, wp);
@@ -399,11 +462,14 @@ function drawRoutes() {
         }
         selectWaypoint(w.id, true);
       });
+      mk.on('drag', (e) => showSnapHint(nearestRef(e.target.getLatLng())));
       mk.on('dragend', (e) => {
         const ll = e.target.getLatLng();
         const ref = nearestRef(ll);
-        if (ref) { w.lat = ref.lat; w.lon = ref.lon; w.ref = ref.key; w.name = refName(ref); w.var = adByIcao(ref.ad).var; }
-        else { w.lat = ll.lat; w.lon = ll.lng; if (w.ref) { w.ref = null; w.name = `WPT ${i}`; nameFromMap(w); } }
+        showSnapHint(null);
+        if (ref && ref.type === 'town') { w.lat = ref.lat; w.lon = ref.lon; w.ref = null; w.town = ref.label; w.name = ref.label; }
+        else if (ref) { w.lat = ref.lat; w.lon = ref.lon; w.ref = ref.key; w.town = undefined; w.name = refName(ref); w.var = adByIcao(ref.ad).var; }
+        else { w.lat = ll.lat; w.lon = ll.lng; if (w.ref || w.town) { w.ref = null; w.town = undefined; w.name = `WPT ${i}`; nameFromMap(w); } }
         update({ rerenderPanels: true });
       });
     });
@@ -412,7 +478,19 @@ function drawRoutes() {
 
 function lerp(a, b, f) { return [a.lat + (b.lat - a.lat) * f, a.lon + (b.lon - a.lon) * f]; }
 
+// A short line across the route at position pos (pixels each side), as drawn on a paper chart.
+function crossTick(a, b, pos, half, style) {
+  const p = map.latLngToLayerPoint(pos);
+  const pa = map.latLngToLayerPoint([a.lat, a.lon]), pb = map.latLngToLayerPoint([b.lat, b.lon]);
+  const dx = pb.x - pa.x, dy = pb.y - pa.y, len = Math.hypot(dx, dy) || 1;
+  const nx = -dy / len * half, ny = dx / len * half;
+  const p1 = map.layerPointToLatLng([p.x + nx, p.y + ny]), p2 = map.layerPointToLatLng([p.x - nx, p.y - ny]);
+  return L.polyline([p1, p2], { pane: 'marks', interactive: false, lineCap: 'butt', ...style });
+}
+
 function drawLegAnnotations(key, rows, wps, isAlt) {
+  const color = isAlt ? '#0a84ff' : '#d1009a';
+  const z = map.getZoom();
   // Re-walk legs: each original leg may contain TOC/TOD sub-rows.
   for (let i = 1; i < wps.length; i++) {
     const a = wps[i - 1], b = wps[i];
@@ -421,28 +499,38 @@ function drawLegAnnotations(key, rows, wps, isAlt) {
     let done = 0;
     legRows.forEach((r) => {
       const f0 = done / legDist, f1 = (done + r.dist) / legDist;
-      // 2-min marks: every (GS/60*2) NM along the segment (SOP: 2 minute markings)
-      if (r.gs > 0 && !r.fixedMin) {
+      // 2-minute marks: every 2 min of flight at this row's ground speed (wind included)
+      if (z >= 8 && r.gs > 0 && !r.fixedMin) {
         const step = (r.gs / 60) * 2;
         for (let d = step; d < r.dist - 0.2; d += step) {
           const f = f0 + (d / r.dist) * (f1 - f0);
-          L.circleMarker(lerp(a, b, f), { pane: 'marks', radius: 3.5, color: '#fff', weight: 1.5, fillColor: isAlt ? '#0a84ff' : '#d1009a', fillOpacity: 1, interactive: false }).addTo(routeLayer);
+          crossTick(a, b, lerp(a, b, f), 6, { color: '#fff', weight: 5, opacity: 0.9 }).addTo(routeLayer);
+          crossTick(a, b, lerp(a, b, f), 6, { color, weight: 2.2 }).addTo(routeLayer);
         }
       }
-      if (r.auto) {
+      if (r.auto && (r.to === 'TOC' || r.to === 'TOD')) {
         const pos = lerp(a, b, f1);
-        L.marker(pos, { pane: 'marks', interactive: false, icon: L.divIcon({ className: '', iconSize: [0, 0], html: `<span class="hat ${isAlt ? 'alt' : ''}">${r.to}</span>` }) }).addTo(routeLayer);
+        crossTick(a, b, pos, 11, { color: '#fff', weight: 7, opacity: 0.95 }).addTo(routeLayer);
+        crossTick(a, b, pos, 11, { color: '#111', weight: 3.5 }).addTo(routeLayer);
+        const up = r.to === 'TOC';
+        L.marker(pos, { pane: 'marks', interactive: false, icon: L.divIcon({ className: '', iconSize: [0, 0], html: `<span class="cd-label ${up ? 'up' : 'down'}">${r.to} ${up ? '↑' : '↓'}</span>` }) }).addTo(routeLayer);
       }
       done += r.dist;
     });
-    // HAT label on the main cruise segment: Heading · Altitude · Time
-    const main = legRows[legRows.length - 1];
-    if (!main || map.getZoom() < 10) continue;
+    const last = legRows[legRows.length - 1];
+    if (!last) continue;
+    // Wind arrow (drawn downwind) with speed, at the middle of the leg
+    if (state.view.winds && +b.wspd > 0 && z >= 8) {
+      const pos = lerp(a, b, 0.5);
+      const to = (+b.wdir + 180) % 360;
+      L.marker(pos, { pane: 'marks', interactive: false, icon: L.divIcon({ className: '', iconSize: [0, 0], html: `<div class="wind-arrow" style="--r:${to}deg"><svg viewBox="0 0 24 24"><path d="M12 3v18M6 15l6 6 6-6"/></svg><span>${String(b.wdir).padStart(3, '0')}/${b.wspd}</span></div>` }) }).addTo(routeLayer);
+    }
+    // HAT on the leg: Heading · Altitude · Time
+    if (z < 10) continue;
     const ete = legRows.reduce((t, r) => t + r.eteSec, 0);
-    const mid = lerp(a, b, 0.5);
-    L.marker(mid, {
+    L.marker(lerp(a, b, 0.5), {
       pane: 'marks', interactive: false,
-      icon: L.divIcon({ className: '', iconSize: [0, 0], html: `<span class="hat ${isAlt ? 'alt' : ''}">${String(main.mh).padStart(3, '0')}° · ${fmtAlt(main.alt, main.altLabel)} · ${fmtMMSS(ete)}</span>` }),
+      icon: L.divIcon({ className: '', iconSize: [0, 0], html: `<span class="hat ${isAlt ? 'alt' : ''}">${String(last.mh).padStart(3, '0')}° · ${last.altDisp || fmtAlt(last.alt, last.altLabel)} · ${fmtMMSS(ete)}</span>` }),
     }).addTo(routeLayer);
   }
 }
@@ -458,9 +546,10 @@ map.on('zoomend', () => drawRoutes());
 
 function compute() {
   const f = state.flight;
-  const main = computeNavlog({ ...state.main, fob: +f.fob || 0 });
+  const ta = endpoint('main', 0)?.ta || 6000;
+  const main = computeNavlog({ ...state.main, fob: +f.fob || 0, ta });
   const lastRem = main.rows.length ? main.rows[main.rows.length - 1].fuelRem : +f.fob || 0;
-  const alt = computeNavlog({ ...state.alt, fob: lastRem });
+  const alt = computeNavlog({ ...state.alt, fob: lastRem, ta });
   const dep = endpoint('main', 0), dest = endpoint('main', -1);
   const local = !!dep && !!dest && dep.icao === dest.icao;
   const fuel = fuelPolicy({
@@ -470,7 +559,7 @@ function compute() {
   const useRoute = state.mb.tripSource === 'route' && main.rows.length > 0;
   const tripL = useRoute ? main.totals.trip : (+state.mb.tripManual || 0);
   const altL = useRoute ? alt.totals.trip : (+state.mb.altManual || 0);
-  const mb = massBalance({ ac: AC, reg: f.reg, pilot: +f.pilot || 0, copilot: +f.copilot || 0, baggage: +f.baggage || 0, fobL: +f.fob || 0, tripL, altL });
+  const mb = fleetType(f.type).mb ? massBalance({ ac: AC, reg: f.reg, pilot: +f.pilot || 0, copilot: +f.copilot || 0, baggage: +f.baggage || 0, fobL: +f.fob || 0, tripL, altL }) : null;
   return { main, alt, fuel, mb };
 }
 
@@ -560,6 +649,29 @@ function semicircularHint(mc, alt) {
   return `Cruising level for MC ${String(mc).padStart(3, '0')}°: ${cands.slice(0, 2).join(' / ')} ft (SERA, above 3000 ft AGL)`;
 }
 
+// Phase 2 manual, company alternate policy: LEBG ↔ LERJ.
+function companyAlternate() {
+  const d = endpoint('main', -1)?.icao;
+  return d === 'LEBG' ? 'LERJ' : d === 'LERJ' ? 'LEBG' : null;
+}
+
+function seraIssues(key) {
+  const out = [];
+  const r = state[key], nl = result[key];
+  nl.rows.forEach((row) => {
+    if (row.phase !== 'cruise' || row.auto) return;
+    const h = semicircularHint(row.mc, row.alt);
+    if (h) out.push({ level: 'warn', text: `${row.from} → ${row.to}: ${h}` });
+  });
+  return out;
+}
+
+function checkApproved(icao) {
+  if (IFR_ONLY.includes(icao)) toast(`${icao} is IFR only for school flights`);
+  else if (!APPROVED.includes(icao)) toast(`${icao} is not on the school's VFR aerodrome list — check with your instructor`);
+  else if (state.flight.solo && !state.unlocked.includes(icao)) toast(`Solo: ${icao} is not in your unlocked aerodromes`);
+}
+
 function renderRoute() {
   const key = state.active;
   const r = route();
@@ -567,6 +679,7 @@ function renderRoute() {
   const nl = result[key];
   const wps = r.waypoints;
   let html = '';
+  if (windChanges.length) html += `<div class="warnings" style="color:var(--tint);background:rgba(10,132,255,0.1)"><b>Winds updated — changes:</b><br>${windChanges.map(esc).join('<br>')}<br>Download the navlog again to reprint.</div>`;
   if (nl.warnings.length) html += `<div class="warnings">${nl.warnings.map(esc).join('<br>')}</div>`;
 
   html += `<div class="group">
@@ -576,13 +689,21 @@ function renderRoute() {
       <label class="switch"><input type="checkbox" data-flag="stdArr" ${r.stdArr ? 'checked' : ''}><span></span></label></div>
     <div class="toggle-row"><span>Solo flight <small class="label">(LEBG entry only via N or W)</small></span>
       <label class="switch"><input type="checkbox" data-solo ${state.flight.solo ? 'checked' : ''}><span></span></label></div>
+    <div class="toggle-row"><span>LEBG low-cloud procedure <small class="label">(cloud base below 5000 ft · dual only)</small></span>
+      <label class="switch"><input type="checkbox" data-lowcloud ${state.flight.lowCloud ? 'checked' : ''} ${state.flight.solo ? 'disabled' : ''}><span></span></label></div>
   </div>`;
   const soloIssue = soloEntryIssue();
   if (soloIssue) html = `<div class="warnings">${esc(soloIssue)}</div>` + html;
+  const semi = seraIssues(key);
+  if (semi.length) html = `<div class="warnings">${semi.map((x) => esc(x.text)).join('<br>')}</div>` + html;
 
   html += `<div class="group-title"><span>${isAlt ? 'Alternate route' : 'Route'} · ${wps.length} point${wps.length === 1 ? '' : 's'}</span>
     <span><button class="btn small" data-act="windall">Wind for all legs</button> <button class="btn small" data-act="reverse">Reverse</button> <button class="btn small danger" data-act="clear">Clear</button></span></div>`;
 
+  const sugg = isAlt ? companyAlternate() : null;
+  if (sugg && (wps.length <= 1)) {
+    html += `<div class="group"><div class="row"><span class="grow">Company alternate policy: <b>${sugg}</b> is the ideal alternate for ${endpoint('main', -1)?.icao}. Check NOTAMs for every alternate.</span><button class="btn small primary" data-act="useAlt" data-ad="${sugg}">Use ${sugg}</button></div></div>`;
+  }
   if (!wps.length) {
     html += `<div class="group"><div class="empty">${isAlt ? 'Tap the chart to plan the route to your alternate. It starts at your destination.' : 'Tap the chart to add your first waypoint.'}</div></div>`;
   } else {
@@ -606,7 +727,7 @@ function renderRoute() {
         const windy = `https://www.windy.com/?wind,${windyLevel(altFt)},${m.lat.toFixed(3)},${m.lon.toFixed(3)},9`;
         html += `<div class="leg">
           <label class="field"><span>Alt / FL</span><input data-f="alt" inputmode="text" value="${esc(w.alt ?? '')}" placeholder="5500"></label>
-          <label class="field narrow"><span>Wind °T</span><input data-f="wdir" inputmode="numeric" value="${esc(w.wdir ?? '')}" placeholder="000"></label>
+          <label class="field narrow"><span>Wind °T${w.windSrc === 'auto' ? ' · auto' : ''}</span><input data-f="wdir" inputmode="numeric" value="${esc(w.wdir ?? '')}" placeholder="000"></label>
           <label class="field narrow"><span>Kt</span><input data-f="wspd" inputmode="numeric" value="${esc(w.wspd ?? '')}" placeholder="0"></label>
           <label class="field narrow"><span>Var °E</span><input data-f="var" inputmode="numeric" value="${esc(w.var ?? '')}" placeholder="1"></label>
           <label class="field narrow"><span>TAS</span><input data-f="tas" inputmode="numeric" value="${esc(w.tas ?? '')}" placeholder="${tasPh}"></label>
@@ -625,14 +746,15 @@ function renderRoute() {
     });
     html += '</div>';
   }
-  html += `<p class="note">Winds must come from an approved source (SOP 2511): <a href="https://www.windy.com" target="_blank" rel="noopener">windy.com</a> or <a href="https://ama.aemet.es/en" target="_blank" rel="noopener">ama.aemet.es</a>. Enter true wind direction. VAR is east-positive (Burgos 1°E): MC = TC − VAR E. Drag the small dot in the middle of a leg to insert a waypoint; drag a waypoint to move it.</p>`;
+  html += `<p class="note">Winds marked “auto” are filled from the Open-Meteo forecast at each leg's altitude and time${state.windSource ? ` (fetched ${new Date(state.windSource.at).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })})` : ''}. The SOP's approved sources are <a href="https://www.windy.com" target="_blank" rel="noopener">windy.com</a> and <a href="https://ama.aemet.es/en" target="_blank" rel="noopener">ama.aemet.es</a> — check them on Windy (link on each leg); a wind you type is kept. Winds are true direction. VAR is east-positive (Burgos 1°E): MC = TC − VAR E. Drag the small dot in the middle of a leg to insert a waypoint; drag a waypoint to move it.</p>`;
   panels.route.innerHTML = html;
 }
 
 panels.route.addEventListener('change', (e) => {
   const t = e.target;
   if (t.dataset.flag) { route()[t.dataset.flag] = t.checked; return update({ rerenderPanels: true }); }
-  if (t.hasAttribute('data-solo')) { state.flight.solo = t.checked; return update({ rerenderPanels: true }); }
+  if (t.hasAttribute('data-solo')) { state.flight.solo = t.checked; if (t.checked) state.flight.lowCloud = false; return update({ rerenderPanels: true }); }
+  if (t.hasAttribute('data-lowcloud')) { state.flight.lowCloud = t.checked; toast(t.checked ? 'LEBG low-cloud procedure: depart via S, W or N at 4500 ft; arrive via N, W or S–E-1 at 4000 ft. E point not used.' : 'Normal LEBG procedures'); return update({ rerenderPanels: true }); }
   const row = t.closest('.wp'); if (!row || !t.dataset.f) return;
   const w = route().waypoints.find((x) => x.id === +row.dataset.id); if (!w) return;
   const f = t.dataset.f;
@@ -642,12 +764,18 @@ panels.route.addEventListener('change', (e) => {
   if (f === 'var') v = v === '' ? '' : +v;
   if (f === 'alt') v = /^fl/i.test(v) ? v.toUpperCase().replace(/\s+/g, '') : (v === '' ? '' : parseAlt(v));
   w[f] = v;
+  if (f === 'wdir' || f === 'wspd') w.windSrc = v === '' ? undefined : 'manual';
   update({ rerenderPanels: true });
 });
 panels.route.addEventListener('click', (e) => {
   const b = e.target.closest('[data-act]'); if (!b) return;
   const r = route();
   const act = b.dataset.act;
+  if (act === 'useAlt') {
+    const p = POINTS.find((x) => x.key === b.dataset.ad);
+    if (p) addPoint(p);
+    return;
+  }
   if (act === 'clear') {
     if (!confirm(`Clear the ${state.active === 'alt' ? 'alternate' : 'main'} route?`)) return;
     r.waypoints = state.active === 'main' ? [adWaypoint(LEBG)] : [];
@@ -657,7 +785,7 @@ panels.route.addEventListener('click', (e) => {
     const s = prompt('Wind for all legs (true direction/speed), e.g. 240/12');
     const m = s && s.match(/(\d{1,3})\D+(\d{1,3})/);
     if (!m) return;
-    r.waypoints.forEach((w, i) => { if (i > 0) { w.wdir = +m[1] % 360; w.wspd = +m[2]; } });
+    r.waypoints.forEach((w, i) => { if (i > 0) { w.wdir = +m[1] % 360; w.wspd = +m[2]; w.windSrc = 'manual'; } });
   } else {
     const row = b.closest('.wp');
     const i = r.waypoints.findIndex((x) => x.id === +row.dataset.id);
@@ -691,7 +819,11 @@ function headerFor(key) {
   const fp = result.fuel;
   const mb = result.mb;
   const ads = [mainDep, mainDest, altDest].filter(Boolean).filter((a, i, arr) => arr.findIndex((b) => b.icao === a.icao) === i);
-  const freq = ads.map((a) => a.freq).join(' | ');
+  const freqs = ads.map((a) => a.freq).filter(Boolean);
+  const nearVitoria = ads.some((a) => ['LEBG', 'LEVT', 'LERJ'].includes(a.icao));
+  if (nearVitoria && !freqs.some((x) => x.startsWith('LEVT'))) freqs.push('LEVT:118.450');
+  freqs.push('OPS:130.705');
+  const freq = freqs.join(' | ');
   if (key === 'main') {
     return {
       date, callsign: f.callsign, reg: f.reg, weather: f.weather, freq,
@@ -718,8 +850,7 @@ function renderNavlog() {
   const h = headerFor(key);
   const f = state.flight;
   let html = `<div class="nl-head">
-    <label class="field"><span>Callsign</span><input data-ff="callsign" value="${esc(f.callsign)}" placeholder="FBY…" autocapitalize="characters"></label>
-    <label class="field"><span>Reg</span><select data-ff="reg">${Object.keys(AC.regs).map((r) => `<option ${r === f.reg ? 'selected' : ''}>${r}</option>`).join('')}</select></label>
+    <div class="field"><span>Aircraft</span><b>${esc(fleetType(f.type).name)} · ${esc(f.reg)}</b></div>
     <div class="field"><span>Departure</span><b>${esc(h.dep) || '—'}</b></div>
     <div class="field"><span>Destination</span><b>${esc(h.dest) || '—'}</b></div>
     <div class="field"><span>Alternate</span><b>${esc(h.alt) || '—'}</b></div>
@@ -735,7 +866,7 @@ function renderNavlog() {
   }
   nl.rows.forEach((r) => {
     const cls = `${r.auto ? 'auto' : ''} ${r.fixedMin ? 'std' : ''}`;
-    html += `<tr class="top ${cls}"><td class="wpt"></td><td rowspan="2">${r.tc}</td><td>${fmtVar(r.var)}</td><td rowspan="2">${fmtAlt(r.alt, r.altLabel)}</td><td rowspan="2">${r.tas}</td>
+    html += `<tr class="top ${cls}"><td class="wpt"></td><td rowspan="2">${r.tc}</td><td>${fmtVar(r.var)}</td><td rowspan="2">${esc(r.altDisp)}${r.vs ? `<span class="alt-arrow ${r.vs}">${r.vs === 'up' ? '↑' : '↓'}</span>` : ''}</td><td rowspan="2">${r.tas}</td>
       <td rowspan="2">${r.wspd ? String(r.wdir).padStart(3, '0') : '—'}</td><td rowspan="2">${r.wspd || '—'}</td><td>${r.wca > 0 ? '+' : ''}${r.wca}</td><td>${r.dist}</td>
       <td rowspan="2">${r.gs}</td><td class="ete strong">${fmtMMSS(r.eteSec)}</td><td class="muted">—</td><td>${r.fuel} L</td></tr>
       <tr class="bot ${cls}"><td class="wpt">${esc(r.to)}</td><td class="strong">${r.mc}</td><td class="strong">${r.mh}</td><td>${r.rem}</td><td class="muted">—</td><td class="muted">—</td><td>${r.fuelRem}</td></tr>`;
@@ -748,7 +879,7 @@ function renderNavlog() {
     <div class="row"><span class="grow label">Trip fuel</span><span class="value">${nl.totals.trip.toFixed(2)} L</span></div>
   </div>
   <p class="note">Blue ETEs are SOP standard times (departure ${SOP.stdDepMin} min, arrival ${SOP.stdArrMin} min). TOC/TOD at ${SOP.roc} ft/min using GS; climb ${SOP.tasClimb} kt / ${SOP.ffClimb} L/h, descent ${SOP.tasDescent} kt / ${SOP.ffDescent} L/h, cruise ${SOP.ffCruise} L/h (SOP 2511 general rule). ETA, ATE, ATA are filled in flight.</p>
-  <button class="btn primary wide" data-act="pdf">Download navlog PDF (FlyBy form)</button>`;
+  <button class="btn primary wide" data-act="pdf">Download navlog PDF</button>`;
   panels.navlog.innerHTML = html;
 }
 panels.navlog.addEventListener('change', (e) => {
@@ -757,6 +888,15 @@ panels.navlog.addEventListener('change', (e) => {
   update({ rerenderPanels: true });
 });
 panels.navlog.addEventListener('click', (e) => { if (e.target.closest('[data-act=pdf]')) downloadPdf(); });
+
+// SOP fuel policy: cross-country flights (different departure and destination) depart with full tanks.
+function crossCountryFull() {
+  const dep = endpoint('main', 0), dest = endpoint('main', -1);
+  if (!dep || !dest || dep.icao === dest.icao) return '';
+  const cap = AC.fuelCapacity, fob = +state.flight.fob || 0;
+  const ok = fob >= cap;
+  return `<div class="row ${ok ? 'check-ok' : 'check-bad'}"><span class="grow label">Cross-country: tanks full before the flight (${cap} L, within M&amp;B limits)</span><span class="value">${ok ? 'OK' : 'NOT FULL'}</span></div>`;
+}
 
 function renderFuel() {
   const f = state.flight;
@@ -779,6 +919,7 @@ function renderFuel() {
     ${row('<b>Minimum required</b>', `${p.required} L`)}
   </div>
   <div class="group">${p.checks.map((c) => row(c.text, c.ok ? 'OK' : 'NOT MET', c.ok ? 'check-ok' : 'check-bad')).join('')}
+  ${crossCountryFull()}
   ${f.taxi === '' ? row('Taxi fuel', 'Enter from POH', 'check-bad') : ''}</div>
   <p class="note">Fuel in litres, mass in kg (SOP 2511). Planning rates are the Flight Planning Manual general rule; the P2008 SOP asks for the most restrictive values of the AFM cruise chart (e.g. 19.2 L/h at 4000 ft / 2100 RPM) — check the POH for your aircraft and RPM. Cross-country flights depart with full tanks within M&amp;B limits.</p>`;
   panels.fuel.innerHTML = html;
@@ -806,11 +947,13 @@ function renderMB() {
   const row = (l, v, cls = '') => `<div class="row ${cls}"><span class="grow label">${l}</span><span class="value">${v}</span></div>`;
   const cgOk = (cg) => cg >= AC.cg[0] && cg <= AC.cg[1];
   const kg = (v) => `${v.toFixed(1)} kg`;
-  let html = `<div class="group-title"><span>${AC.type} · MTOW ${AC.mtow} kg</span></div>
+  const ft = fleetType(f.type);
+  let html = `<div class="group-title"><span>${esc(ft.name)}${ft.mb ? ` · MTOW ${AC.mtow} kg` : ''}</span></div>
   <div class="group"><div class="row wrap">
-    <label class="field"><span>Registration</span><select data-ff="reg">${Object.keys(AC.regs).map((r) => `<option ${r === f.reg ? 'selected' : ''}>${r}</option>`).join('')}</select></label>
-    <label class="field"><span>Student code</span><input data-mb="studentCode" value="${esc(mbs.studentCode)}" placeholder="U24…" autocapitalize="characters"></label>
-  </div><div class="row wrap">
+    <label class="field"><span>Aircraft type</span><select data-ff="type">${FLEET_TYPES.map((t) => `<option value="${t.id}" ${t.id === f.type ? 'selected' : ''}>${t.name}${t.mb ? '' : ' — M&B coming'}</option>`).join('')}</select></label>
+    <label class="field"><span>Registration</span><select data-ff="reg">${fleetType(f.type).regs.map((r) => `<option ${r === f.reg ? 'selected' : ''}>${r}</option>`).join('') || '<option>—</option>'}</select></label>
+    <label class="field"><span>Student code</span><input data-mb="studentCode" value="${esc(mbs.studentCode)}" autocapitalize="characters" autocomplete="off"></label>
+  </div>${fleetType(f.type).mb ? '' : `<div class="row"><span class="grow label">The ${esc(fleetType(f.type).name)} M&amp;B sheet is not set up yet. It will follow its SOP's worked example; for now use the paper sheet.</span></div>`}<div class="row wrap">
     <label class="field"><span>Pilot (kg)</span><input data-ff="pilot" inputmode="decimal" value="${esc(f.pilot)}" placeholder="real mass"></label>
     <label class="field"><span>Copilot / FI (kg)</span><input data-ff="copilot" inputmode="decimal" value="${esc(f.copilot)}" placeholder="0 if solo"></label>
     <label class="field"><span>Baggage (kg)</span><input data-ff="baggage" inputmode="decimal" value="${esc(f.baggage)}"></label>
@@ -840,7 +983,11 @@ function renderMB() {
       ${row(`Landing CG ${AC.cg[0]} – ${AC.cg[1]} m`, `${m.ldgCg.toFixed(3)} m`, cgOk(m.ldgCg) ? 'check-ok' : 'check-bad')}
     </div>`;
   }
-  html += `<div class="group-title"><span>Printed on the sheet</span></div>
+  html += `<div class="group">
+      <div class="row"><span class="grow label">Fuel on board: use the real quantity checked with FISUP/Dispatcher, not an estimate (SOP).</span></div>
+      <div class="row"><span class="grow label">Masses: use the real masses of the student, instructor and passengers (SOP).</span></div>
+    </div>
+  <div class="group-title"><span>Printed on the sheet</span></div>
   <div class="group"><div class="row wrap">
     <label class="field full"><span>Weather</span><input data-ff="weather" value="${esc(f.weather)}" placeholder="METAR / TAF summary"></label>
     <label class="field full"><span>NOTAMs</span><input data-mb="notams" value="${esc(mbs.notams)}" placeholder="Relevant NOTAMs"></label>
@@ -853,7 +1000,8 @@ panels.mb.addEventListener('change', (e) => {
   const t = e.target;
   if (t.dataset.ff) {
     const k = t.dataset.ff;
-    state.flight[k] = k === 'reg' || k === 'weather' ? t.value : (t.value === '' ? '' : Math.max(0, +t.value));
+    if (k === 'type') { state.flight.type = t.value; state.flight.reg = fleetType(t.value).regs[0] || ''; }
+    else state.flight[k] = k === 'reg' || k === 'weather' ? t.value : (t.value === '' ? '' : Math.max(0, +t.value));
   } else if (t.dataset.mb) {
     state.mb[t.dataset.mb] = t.dataset.mb === 'studentCode' ? t.value.toUpperCase().trim() : t.value;
   } else if (t.dataset.mbflag) {
@@ -884,7 +1032,7 @@ async function downloadMbPdf() {
       },
       to: [m.tom, m.toCg, m.tom * m.toCg, m.tom <= AC.mtow, cgOk(m.toCg)],
       ldg: [m.lm, m.ldgCg, m.lm * m.ldgCg, m.lm <= AC.mtow, cgOk(m.ldgCg)],
-    });
+    }, planData());
     saveBlob(bytes, `MB_${f.reg}_${flightTime().toISOString().slice(0, 10)}.pdf`);
     toast('M&B sheet ready');
   } catch (err) { console.error(err); toast('Could not build the PDF: ' + err.message); }
@@ -903,11 +1051,12 @@ document.getElementById('btnMbPdf').addEventListener('click', downloadMbPdf);
 
 function renderPanels() {
   document.querySelectorAll('#routeSel button').forEach((b) => b.classList.toggle('on', b.dataset.route === state.active));
-  document.getElementById('routeSel').hidden = tab === 'fuel';
+  document.getElementById('routeSel').hidden = tab === 'fuel' || tab === 'brief';
   if (state.mode === 'mb') return renderMB();
   if (tab === 'route') renderRoute();
   if (tab === 'navlog') renderNavlog();
   if (tab === 'fuel') renderFuel();
+  if (tab === 'brief') renderBriefing();
   if (tab === 'profile') renderProfile();
 }
 
@@ -925,6 +1074,331 @@ function renderSummary() {
   const dep = endpoint('main', 0), dest = endpoint('main', -1);
   document.getElementById('brandSub').textContent = [dep?.icao, dest?.icao].filter(Boolean).join(' → ') || 'LEBG';
 }
+
+/* ---------------- Go / no-go checks and briefing ---------------- */
+
+function times() {
+  const to = flightTime();
+  const ldg = new Date(to.getTime() + result.main.totals.timeSec * 1000);
+  const altArr = new Date(ldg.getTime() + result.alt.totals.timeSec * 1000);
+  return { to, ldg, altArr };
+}
+
+function routeLegs(key) {
+  const wps = state[key].waypoints;
+  const legs = [];
+  for (let i = 1; i < wps.length; i++) legs.push({ a: wps[i - 1], b: wps[i], alt: parseAlt(wps[i].alt), dist: distanceNm(wps[i - 1], wps[i]), name: `${wps[i - 1].name} → ${wps[i].name}` });
+  return legs;
+}
+
+/** Everything that can be checked without the network. */
+function planIssues() {
+  const issues = [];
+  const f = state.flight;
+  const { to, ldg, altArr } = times();
+  const dep = endpoint('main', 0), dest = endpoint('main', -1), alt = endpoint('alt', -1);
+  if (!result.main.rows.length) return issues;
+  // approved aerodromes / IFR only / unlocked
+  for (const [ad, role] of [[dest, 'Destination'], [alt, 'Alternate']]) {
+    if (!ad) continue;
+    if (IFR_ONLY.includes(ad.icao)) issues.push({ level: 'bad', text: `${role} ${ad.icao} is IFR only for school flights` });
+    else if (!APPROVED.includes(ad.icao)) issues.push({ level: 'warn', text: `${role} ${ad.icao} is not on the school's VFR aerodrome list` });
+    if (f.solo && !state.unlocked.includes(ad.icao)) issues.push({ level: 'bad', text: `Solo: ${role.toLowerCase()} ${ad.icao} is not one of your unlocked aerodromes` });
+  }
+  if (!alt) issues.push({ level: 'warn', text: 'No alternate planned — each leg needs an alternate (school policy)' });
+  // aerodrome hours
+  for (const [ad, t, role] of [[dep, to, 'departure'], [dest, ldg, 'arrival'], [alt, altArr, 'alternate arrival']]) {
+    if (!ad) continue;
+    const h = aerodromeOpen(ad.icao, t);
+    if (h.known && !h.open) issues.push({ level: 'bad', text: `${ad.icao} closed at your ${role} time (${hhmmZ(t)}) — ${h.text}` });
+    else if (!h.known && role !== 'departure') issues.push({ level: 'info', text: `${ad.icao}: ${h.text}` });
+  }
+  // daylight / night
+  const sun = sunTimes(to, (dep || LEBG).lat, (dep || LEBG).lon);
+  if (sun.rise && to < sun.rise) issues.push({ level: 'warn', text: `Takeoff ${hhmmZ(to)} is before sunrise (${hhmmZ(sun.rise)})` });
+  if (sun.set && ldg > sun.set) issues.push({ level: 'warn', text: `Landing ${hhmmZ(ldg)} is after sunset (${hhmmZ(sun.set)}) — night VFR: two alternates, alternates' closing times, NIGHT VFR FLIGHT in FPL item 18` });
+  // fuel
+  result.fuel.checks.forEach((c) => { if (!c.ok) issues.push({ level: 'bad', text: c.text + ' — not met' }); });
+  if (f.taxi === '') issues.push({ level: 'info', text: 'Taxi fuel not entered (Fuel tab)' });
+  if (dep && dest && dep.icao !== dest.icao && (+f.fob || 0) < AC.fuelCapacity) issues.push({ level: 'warn', text: 'Cross-country: tanks should be full before the flight (within M&B limits)' });
+  if (result.mb && !result.mb.ok) issues.push({ level: 'bad', text: 'Mass & balance outside limits' });
+  // solo + aerodrome specifics
+  const solo = soloEntryIssue(); if (solo) issues.push({ level: 'bad', text: solo });
+  if (dest && FULL_STOP.includes(dest.icao)) issues.push({ level: 'info', text: `${dest.icao} requires a full-stop landing` });
+  if (dest && NO_REFUEL.includes(dest.icao)) issues.push({ level: 'info', text: `${dest.icao}: no refuelling available` });
+  // cruising levels
+  issues.push(...seraIssues('main'));
+  // airspace along the route
+  for (const key of ['main', 'alt']) {
+    const ends = [endpoint(key, 0), endpoint(key, -1)].filter(Boolean);
+    airspaceCrossings(routeLegs(key), AIRSPACES)
+      .filter((c) => !(['FIZ', 'CTR', 'ATZ', 'RMZ', 'TMZ'].includes(c.sp.type) && ends.some((ad) => c.leg.includes(ad.icao))))
+      .forEach((c) => issues.push(crossingIssue(c)));
+  }
+  return dedupe(issues);
+}
+
+function dedupe(list) {
+  const seen = new Set();
+  return list.filter((i) => (seen.has(i.text) ? false : seen.add(i.text)));
+}
+const hhmmZ = (d) => `${String(d.getUTCHours()).padStart(2, '0')}${String(d.getUTCMinutes()).padStart(2, '0')}Z`;
+
+let wxState = { key: '', data: null, err: null, loading: false };
+async function loadWeather(force = false) {
+  const ads = [endpoint('main', 0), endpoint('main', -1), endpoint('alt', -1)].filter(Boolean).map((a) => a.icao);
+  const key = ads.join(',');
+  if (!key || (!force && wxState.key === key && (wxState.data || wxState.loading))) return;
+  wxState = { key, data: null, err: null, loading: true };
+  if (tab === 'brief') renderBriefing();
+  try { wxState.data = await fetchWeather(ads); } catch (e) { wxState.err = e.message; }
+  wxState.loading = false;
+  if (tab === 'brief') renderBriefing();
+}
+
+function weatherIssues() {
+  if (!wxState.data) return [];
+  const f = state.flight;
+  const ft = fleetType(f.type);
+  const xwLimit = ft.xwind ? (f.solo ? ft.xwind.solo : ft.xwind.fi) : null;
+  const { to, ldg, altArr } = times();
+  const out = [];
+  const list = [[endpoint('main', 0), to], [endpoint('main', -1), ldg], [endpoint('alt', -1), altArr]];
+  for (const [ad, t] of list) {
+    if (!ad) continue;
+    out.push(...assess(ad.icao, wxState.data[ad.icao], t, t, { solo: f.solo, xwLimit }).issues);
+  }
+  return out;
+}
+
+function copyBtn(id) { return `<div class="copy-row"><button class="btn small" data-copy="${id}">Copy</button></div>`; }
+
+function renderBriefing() {
+  const f = state.flight;
+  const dep = endpoint('main', 0), dest = endpoint('main', -1), alt = endpoint('alt', -1);
+  const { to, ldg, altArr } = times();
+  loadWeather();
+  const issues = dedupe([...weatherIssues(), ...planIssues()]);
+  const order = { bad: 0, warn: 1, info: 2 };
+  issues.sort((a, b) => order[a.level] - order[b.level]);
+  const bad = issues.filter((i) => i.level === 'bad').length, warn = issues.filter((i) => i.level === 'warn').length;
+  let html = `<div class="group-title"><span>Go / no-go · ${bad ? `<span class="badge bad">${bad} no-go</span>` : '<span class="badge ok">no blockers</span>'} ${warn ? `<span class="badge warn">${warn} to check</span>` : ''}</span></div>`;
+  html += issues.length
+    ? `<ul class="issues">${issues.map((i) => `<li class="${i.level}"><span class="ic">${i.level === 'bad' ? '✕' : i.level === 'warn' ? '!' : 'i'}</span><span>${esc(i.text)}</span></li>`).join('')}</ul>`
+    : `<div class="group"><div class="empty">${result.main.rows.length ? 'No issues found. The final decision stays with you and your instructor.' : 'Plan a route to see the checks.'}</div></div>`;
+
+  // 1. Weather
+  html += `<div class="group-title"><span>1 · Weather (METAR / TAF)</span><button class="btn small" data-act="wx">Refresh</button></div><div class="group">`;
+  if (wxState.loading) html += '<div class="empty">Loading METAR and TAF…</div>';
+  else if (wxState.err) html += `<div class="empty">Weather unavailable (${esc(wxState.err)}). Check <a href="https://ama.aemet.es/en" target="_blank" rel="noopener">AEMET</a>.</div>`;
+  else if (!dep) html += '<div class="empty">Add aerodromes to the route.</div>';
+  const shown = new Set();
+  for (const [ad, t, role] of [[dep, to, dep && dest && dep.icao === dest.icao ? 'Departure & return' : 'Departure'], [dest, ldg, 'Destination'], [alt, altArr, 'Alternate']]) {
+    if (!ad || !wxState.data || shown.has(ad.icao)) continue;
+    shown.add(ad.icao);
+    const w = wxState.data[ad.icao] || {};
+    const ft = fleetType(f.type);
+    const a = assess(ad.icao, w, t, t, { solo: f.solo, xwLimit: ft.xwind ? (f.solo ? ft.xwind.solo : ft.xwind.fi) : null });
+    const st = a.issues.some((i) => i.level === 'bad') ? ['bad', 'BELOW MINIMA'] : a.issues.some((i) => i.level === 'warn') ? ['warn', 'CHECK'] : (w.metar || w.taf) ? ['ok', 'OK'] : ['muted', 'NO DATA'];
+    html += `<div class="wx"><div class="wx-head"><b>${ad.icao}</b><span class="label">${role} · ${hhmmZ(t)} ±1 h</span><span class="badge ${st[0]}">${st[1]}</span></div>
+      ${w.metar ? `<div class="label" style="font-size:12px">${esc(metarSummary(w.metar))}${a.xw ? ` · best RWY ${a.xw.rwy}: crosswind ${a.xw.xw} kt` : ''}</div><div class="mono">${esc(w.metar.rawOb)}</div>` : '<div class="label">No METAR</div>'}
+      ${w.taf ? `<div class="mono" style="margin-top:4px">${esc(w.taf.rawTAF)}</div>` : ''}</div>`;
+  }
+  html += `</div><p class="note">Limits ${f.solo ? 'solo: visibility 7000 m, ceiling 2500 ft' : 'with FI: visibility 5000 m, ceiling 1500 ft'} BKN/OVC, ±1 h of your time there; crosswind ${fleetType(f.type).xwind ? `${f.solo ? fleetType(f.type).xwind.solo : fleetType(f.type).xwind.fi} kt` : 'per aircraft SOP'}. Also brief surface pressure charts, SIGWX and wind charts (SOP briefing order). Source: aviationweather.gov.</p>`;
+
+  // 2. NOTAMs
+  html += `<div class="group-title"><span>2 · NOTAMs</span></div><div class="group">
+    <div class="row"><span class="grow">Aerodromes: ${[dep, dest, alt].filter(Boolean).map((a) => a.icao).filter((x, i, arr) => arr.indexOf(x) === i).join(', ') || '—'} — check every alternate individually</span><a class="btn small" href="https://notampib.enaire.es/icaro" target="_blank" rel="noopener">ICARO ↗</a></div>
+    <div class="row"><span class="grow">En-route NOTAMs (Phase 3 manual)</span><a class="btn small" href="https://insigniavfr.enaire.es" target="_blank" rel="noopener">Insignia VFR ↗</a></div>
+  </div>`;
+
+  // 3. ATC flight plan
+  const tas = result.main.rows.find((r) => r.phase === 'cruise')?.tas || 100;
+  const night = (() => { const s2 = sunTimes(to, (dep || LEBG).lat, (dep || LEBG).lon); return s2.set && ldg > s2.set; })();
+  const endMin = Math.floor(((+f.fob || 0) / SOP.ffCruise) * 60);
+  const fpl = dep && dest ? buildFpl({
+    callsign: f.callsign, reg: f.reg, acType: fleetType(f.type).icao, dep: dep.icao, dest: dest.icao,
+    alts: [alt?.icao].filter(Boolean), eobt: new Date(to.getTime() - 10 * 60e3), tas,
+    wps: state.main.waypoints.map((w) => ({ ...w, fplName: w.ref && POINTS.find((p) => p.key === w.ref)?.type === 'ad' ? w.ref : null })),
+    eetMin: Math.round(result.main.totals.timeSec / 60), night,
+    dof: `${String(to.getUTCFullYear()).slice(2)}${String(to.getUTCMonth() + 1).padStart(2, '0')}${String(to.getUTCDate()).padStart(2, '0')}`,
+    endurance: `${String(Math.floor(endMin / 60)).padStart(2, '0')}${String(endMin % 60).padStart(2, '0')}`, pob: f.pob,
+  }) : '';
+  html += `<div class="group-title"><span>3 · ATC flight plan (draft)</span></div><div class="group">${fpl ? `<div class="wx mono" id="fplText">${esc(fpl)}</div>${copyBtn('fplText')}` : '<div class="empty">Plan a route between two aerodromes.</div>'}</div>
+    <p class="note">EOBT is set 10 min before takeoff. Check equipment, endurance and persons on board before filing.</p>`;
+
+  // 4. Mission: departure / arrival briefing, alternate, charts
+  const wps = state.main.waypoints;
+  const depPts = wps.filter((w) => w.proc === 'dep');
+  const exitW = depPts[depPts.length - 1];
+  const firstEnroute = result.main.rows.find((r) => r.phase === 'cruise' || r.phase === 'climb');
+  const arrPts = wps.filter((w) => w.proc === 'arr');
+  const entryIdx = wps.findIndex((w) => w.proc === 'arr') - 1;
+  const entryW = entryIdx >= 0 ? wps[entryIdx] : wps[wps.length - 2];
+  const depText = departureBriefing({ dep: dep?.icao, exitPoint: exitW?.name, procAlt: parseAlt(exitW?.alt), cruiseAlt: parseAlt(firstEnroute?.alt), firstMh: firstEnroute?.mh, next: firstEnroute?.to, procRoute: depPts.map((w) => w.name) });
+  const arrText = arrivalBriefing({ dest: dest?.icao, entryPoint: entryW?.name, procAlt: parseAlt(arrPts[0]?.alt ?? entryW?.alt), procRoute: [entryW?.name, ...arrPts.map((w) => w.name)].filter(Boolean), pattern: dest?.icao === 'LEBG' ? 'joining the north circuit at 4000 ft' : dest?.icao === 'LERJ' ? 'circuit 3000 ft' : '' });
+  html += `<div class="group-title"><span>4 · Mission objective</span></div><div class="group">
+    <div class="wx"><div class="wx-head"><b>Departure briefing</b></div><div id="depBrief">${esc(depText) || '—'}</div></div>${depText ? copyBtn('depBrief') : ''}
+    <div class="wx"><div class="wx-head"><b>Arrival briefing</b><span class="label">Phase 1 format</span></div><div id="arrBrief">${esc(arrText) || '—'}</div></div>${arrText ? copyBtn('arrBrief') : ''}
+    <div class="wx"><div class="wx-head"><b>Charts to have in sight</b></div>${[dep, dest, alt].filter(Boolean).filter((a, i, arr) => arr.findIndex((b) => b.icao === a.icao) === i).map((a) => `<a href="${a.vac}" target="_blank" rel="noopener">${a.icao} VAC ↗</a>`).join(' · ') || '—'} · ENAIRE 1:500 000 chart</div>
+    <div class="wx"><div class="wx-head"><b>Frequencies</b></div>${esc(headerFor('main').freq)}</div>
+  </div>`;
+
+  // 7. TEM
+  const crossings = airspaceCrossings(routeLegs('main'), AIRSPACES);
+  const threats = temThreats({ ads: [dep, dest, alt].filter(Boolean).map((a) => a.icao), crossings, solo: f.solo, night, mountains: (terrainData || []).some((t) => t.corridor > 4500), hot: wxState.data && dep && (wxState.data[dep.icao]?.metar?.temp ?? 0) > 30 });
+  html += `<div class="group-title"><span>7 · Threat &amp; error management</span></div><div class="group">${threats.map((t, i) => `<label class="tem-row"><input type="checkbox" data-tem="${esc(t)}" ${state.tem[t] ? 'checked' : ''}><span>${esc(t)}</span></label>`).join('')}</div>`;
+
+  // Unlocked aerodromes
+  html += `<div class="group-title"><span>My unlocked aerodromes</span></div><div class="group"><div class="chips">${EASY_FIRST.map((ad) => `<label><input type="checkbox" data-unlock="${ad}" ${state.unlocked.includes(ad) ? 'checked' : ''}>${ad}</label>`).join('')}</div></div>
+  <p class="note">Solo flights only go to aerodromes already flown with an instructor (solo manual). Briefing order: weather, NOTAMs, ATC flight plan, mission objective, mass &amp; balance, performance, TEM.</p>`;
+  panels.brief.innerHTML = html;
+}
+
+panels.brief.addEventListener('click', (e) => {
+  const c = e.target.closest('[data-copy]');
+  if (c) {
+    const el = document.getElementById(c.dataset.copy);
+    navigator.clipboard?.writeText(el.innerText).then(() => toast('Copied'), () => toast('Copy failed'));
+    return;
+  }
+  if (e.target.closest('[data-act=wx]')) loadWeather(true);
+});
+panels.brief.addEventListener('change', (e) => {
+  const t = e.target;
+  if (t.dataset.tem) { state.tem[t.dataset.tem] = t.checked; scheduleSave(); }
+  if (t.dataset.unlock) {
+    const ad = t.dataset.unlock;
+    state.unlocked = t.checked ? [...new Set([...state.unlocked, ad])] : state.unlocked.filter((x) => x !== ad);
+    update({ rerenderPanels: true });
+  }
+});
+
+/* ---------------- Winds aloft ---------------- */
+
+let windTimer = null, windBusy = false;
+function scheduleAutoWinds() { clearTimeout(windTimer); windTimer = setTimeout(() => updateWinds({ auto: true }), 1200); }
+
+async function updateWinds({ auto = false } = {}) {
+  if (windBusy || !navigator.onLine) return;
+  const jobs = [];
+  const t0 = flightTime();
+  let offset = 0;
+  for (const key of ['main', 'alt']) {
+    const wps = state[key].waypoints, rows = result[key].rows;
+    let cum = 0;
+    for (let i = 1; i < wps.length; i++) {
+      const w = wps[i];
+      const legRows = rows.filter((r) => r.legIndex === i);
+      const ete = legRows.reduce((t, r) => t + r.eteSec, 0);
+      if (auto && (w.windSrc === 'manual' || (w.windSrc === 'auto' && w.windFor === state.time + '|' + w.alt))) { cum += ete; continue; }
+      const m = midpoint(wps[i - 1], w);
+      jobs.push({ w, key, lat: m.lat, lon: m.lon, altFt: parseAlt(w.alt) || 5500, time: new Date(t0.getTime() + (offset + cum + ete / 2) * 1000) });
+      cum += ete;
+    }
+    offset += result[key].totals.timeSec;
+  }
+  if (!jobs.length) { if (!auto) toast('Winds are up to date'); return; }
+  windBusy = true;
+  if (!auto) toast('Fetching winds…');
+  const before = snapshot();
+  try {
+    const res = await fetchWinds(jobs);
+    jobs.forEach((j, i) => {
+      const r = res[i]; if (!r) return;
+      if (!auto && j.w.windSrc === 'manual') return; // keep winds typed in by hand
+      j.w.wdir = r.dir; j.w.wspd = r.spd; j.w.windSrc = 'auto'; j.w.windFor = state.time + '|' + j.w.alt;
+    });
+    state.windSource = { at: new Date().toISOString(), model: 'Open-Meteo forecast' };
+    update({ rerenderPanels: true });
+    if (!auto) showWindChanges(before, snapshot());
+  } catch (err) {
+    if (!auto) toast('Could not fetch winds: ' + err.message);
+  } finally { windBusy = false; }
+}
+
+function snapshot() {
+  return ['main', 'alt'].flatMap((k) => result[k].rows.map((r) => ({ k, leg: `${r.from} → ${r.to}`, mh: r.mh, ete: r.eteSec, fuel: r.fuel })));
+}
+function showWindChanges(a, b) {
+  const changes = [];
+  b.forEach((r) => {
+    const o = a.find((x) => x.k === r.k && x.leg === r.leg); if (!o) return;
+    const dh = Math.abs(((r.mh - o.mh + 540) % 360) - 180), dt = Math.abs(r.ete - o.ete), df = Math.abs(r.fuel - o.fuel);
+    if (dh >= 2 || dt >= 60 || df >= 0.5) changes.push(`${r.leg}: MH ${o.mh}→${r.mh}°, ETE ${fmtMMSS(o.ete)}→${fmtMMSS(r.ete)}, fuel ${o.fuel}→${r.fuel} L`);
+  });
+  windChanges = changes;
+  toast(changes.length ? `Winds updated — ${changes.length} leg${changes.length > 1 ? 's' : ''} changed. Reprint the navlog.` : 'Winds updated — no significant changes');
+  if (tab === 'route') renderRoute();
+}
+let windChanges = [];
+document.getElementById('btnWinds').addEventListener('click', () => updateWinds({ auto: false }));
+
+/* ---------------- Saved plans ---------------- */
+
+function planData() {
+  const { main, alt, active, time, flight, mb, unlocked, tem } = state;
+  return { v: 1, main, alt, active, time, flight, mb, unlocked, tem };
+}
+function loadPlanData(d) {
+  if (!d || !d.main) return toast('That file does not contain a plan');
+  state = { ...state, ...d, flight: { ...state.flight, ...d.flight }, mb: { ...state.mb, ...d.mb } };
+  syncSlider(); update({ rerenderPanels: true }); setTimeout(fitRoute, 50);
+}
+const plansPop = document.getElementById('plansPop');
+function planName() {
+  const dep = endpoint('main', 0)?.icao || state.main.waypoints[0]?.name || '?';
+  const dest = endpoint('main', -1)?.icao || state.main.waypoints.at(-1)?.name || '?';
+  return `${dep} → ${dest} · ${dFmt.format(flightTime())} ${tFmt.format(flightTime())}`;
+}
+function renderPlans() {
+  const list = listPlans();
+  document.getElementById('plansList').innerHTML = list.length ? list.map((p) => `<div class="plan-item" data-id="${p.id}"><div class="grow" data-open><b>${esc(p.name)}</b><small>saved ${new Date(p.saved).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })}</small></div><button class="icon-btn" data-del aria-label="Delete">${ICON.trash}</button></div>`).join('') : '<div class="pop-note">No saved plans yet.</div>';
+}
+document.getElementById('btnPlans').addEventListener('click', (e) => { e.stopPropagation(); renderPlans(); plansPop.hidden = !plansPop.hidden; layersPop.hidden = true; });
+document.addEventListener('pointerdown', (e) => { if (!plansPop.hidden && !e.target.closest('#plansPop, #btnPlans')) plansPop.hidden = true; });
+document.getElementById('plansList').addEventListener('click', (e) => {
+  const item = e.target.closest('.plan-item'); if (!item) return;
+  if (e.target.closest('[data-del]')) { if (confirm('Delete this saved plan?')) { deletePlan(item.dataset.id); renderPlans(); } return; }
+  const p = getPlan(item.dataset.id);
+  if (p) { state.planId = p.id; loadPlanData(p.data); plansPop.hidden = true; toast(`Opened ${p.name}`); }
+});
+document.getElementById('btnSavePlan').addEventListener('click', () => {
+  const name = prompt('Name for this plan', planName());
+  if (!name) return;
+  state.planId = savePlan(name, planData(), state.planId);
+  renderPlans(); toast('Plan saved'); scheduleSave();
+});
+document.getElementById('btnNewPlan').addEventListener('click', () => {
+  if (!confirm('Start a new plan? Save the current one first if you need it.')) return;
+  const keep = { flight: { ...state.flight }, unlocked: state.unlocked, view: state.view };
+  state = { ...defaultState(), ...keep, planId: null };
+  syncSlider(); update({ rerenderPanels: true }); plansPop.hidden = true;
+});
+document.getElementById('pdfInput').addEventListener('change', async (e) => {
+  const file = e.target.files[0]; e.target.value = '';
+  if (!file) return;
+  try {
+    const d = await planFromPdf(await file.arrayBuffer());
+    if (!d) return toast('This PDF was not made by the app, so it has no plan inside');
+    state.planId = null; loadPlanData(d); plansPop.hidden = true;
+    toast('Plan restored from the PDF — tap Update winds for the latest forecast');
+  } catch (err) { toast('Could not read the PDF: ' + err.message); }
+});
+
+/* ---------------- Plan bar, panel ---------------- */
+
+const callsignInput = document.getElementById('callsignInput');
+callsignInput.addEventListener('change', () => { state.flight.callsign = callsignInput.value.toUpperCase().trim(); update({ rerenderPanels: true }); });
+function syncPlanBar() { if (document.activeElement !== callsignInput) callsignInput.value = state.flight.callsign || ''; }
+
+function setPanel(open) {
+  state.view.panel = open;
+  document.documentElement.classList.toggle('panel-closed', !open);
+  setTimeout(renderProfile, 400);
+  scheduleSave();
+}
+document.getElementById('panelToggle').addEventListener('click', () => setPanel(!state.view.panel));
 
 /* ---------------- Vertical profile ---------------- */
 
@@ -996,7 +1470,9 @@ function update(opts = {}) {
   renderMbSummary();
   scheduleTerrain();
   renderTime();
+  syncPlanBar();
   if (opts.rerenderPanels !== false) renderPanels();
+  if (opts.winds !== false) scheduleAutoWinds();
   scheduleSave();
 }
 
@@ -1017,7 +1493,7 @@ async function downloadPdf() {
     toast('Building navlog…');
     const sheets = [{ header: headerFor('main'), rows: result.main.rows }];
     if (result.alt.rows.length) sheets.push({ header: headerFor('alt'), rows: result.alt.rows });
-    const bytes = await buildNavlogPdf(sheets);
+    const bytes = await buildNavlogPdf(sheets, planData());
     const h = sheets[0].header;
     const name = `Navlog_${h.dep}-${h.dest}_${flightTime().toISOString().slice(0, 10)}.pdf`;
     saveBlob(bytes, name);
@@ -1102,6 +1578,9 @@ function togglePoints() { if (state.view.points) pointsLayer.addTo(map); else ma
 const chkNames = document.getElementById('chkNames');
 chkNames.checked = state.view.names;
 chkNames.addEventListener('change', () => { state.view.names = chkNames.checked; togglePlaces(); save(); });
+const chkWinds = document.getElementById('chkWinds');
+chkWinds.checked = state.view.winds;
+chkWinds.addEventListener('change', () => { state.view.winds = chkWinds.checked; drawRoutes(); save(); });
 const chkMarks = document.getElementById('chkMarks');
 chkMarks.checked = state.view.marks;
 chkMarks.addEventListener('change', () => { state.view.marks = chkMarks.checked; drawRoutes(); save(); });
@@ -1144,6 +1623,7 @@ document.getElementById('btnOffline').addEventListener('click', async () => {
 
 syncSlider();
 showPanels();
+document.documentElement.classList.toggle('panel-closed', !state.view.panel);
 dock.classList.toggle('collapsed', !state.view.profile);
 document.documentElement.classList.toggle('profile-collapsed', !state.view.profile);
 setDetent(1, false);
@@ -1151,6 +1631,11 @@ togglePoints();
 initBase();
 update();
 if (state.main.waypoints.length > 1) setTimeout(fitRoute, 50);
+else setTimeout(() => {
+  // keep Burgos in the visible part of the map, not under the panel / sheet
+  if (isWide()) map.panBy([state.view.panel ? -200 : 0, 60], { animate: false });
+  else map.panBy([0, sheetH() / 2], { animate: false });
+}, 30);
 
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   navigator.serviceWorker.register('sw.js').catch(() => {});

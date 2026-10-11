@@ -18,33 +18,35 @@
 <body>
   <div id="map" aria-label="VFR chart"></div>
 
-  <!-- Top bar -->
-  <header class="topbar">
+  <!-- Date & time (top centre of the map area) -->
+  <div class="glass timecard" id="timecard">
+    <button class="icon-btn step" id="timeMinus" type="button" aria-label="5 minutes earlier"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
+    <div class="time-col">
+      <button class="time-label" id="timeLabel" type="button" aria-label="Choose date and time">
+        <span class="time-main" id="timeMain">—</span>
+        <span class="time-sub" id="timeSub">—</span>
+        <span class="sun" id="sunRow"></span>
+      </button>
+      <input type="range" id="timeSlider" min="0" max="864" step="1" value="0" aria-label="Date and time of the flight">
+    </div>
+    <button class="icon-btn step" id="timePlus" type="button" aria-label="5 minutes later"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+    <input type="datetime-local" id="timePicker" class="visually-hidden" tabindex="-1" step="300">
+  </div>
+
+  <!-- Right column: brand, then map controls stacked underneath -->
+  <div class="rightcol">
     <div class="glass pill brand">
       <span class="brand-mark" aria-hidden="true"></span>
       <span class="brand-text">Navlog</span>
       <span class="brand-sub" id="brandSub">LEBG</span>
     </div>
-
-    <div class="glass timecard" id="timecard">
-      <button class="time-label" id="timeLabel" type="button" aria-label="Choose date and time">
-        <span class="time-main" id="timeMain">—</span>
-        <span class="time-sub" id="timeSub">—</span>
-      </button>
-      <input type="range" id="timeSlider" min="0" max="672" step="1" value="0" aria-label="Date and time of the flight">
-      <div class="sun" id="sunRow"></div>
-      <input type="datetime-local" id="timePicker" class="visually-hidden" tabindex="-1">
-    </div>
-
-    <div class="topbar-right">
-      <button class="glass round" id="btnLayers" type="button" aria-label="Map layers">
-        <svg viewBox="0 0 24 24"><path d="M12 3 2.5 8 12 13l9.5-5L12 3Z"/><path d="m2.5 12 9.5 5 9.5-5"/><path d="m2.5 16 9.5 5 9.5-5"/></svg>
-      </button>
-      <button class="glass round" id="btnHome" type="button" aria-label="Centre on Burgos">
-        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
-      </button>
-    </div>
-  </header>
+    <button class="glass round" id="btnLayers" type="button" aria-label="Map layers">
+      <svg viewBox="0 0 24 24"><path d="M12 3 2.5 8 12 13l9.5-5L12 3Z"/><path d="m2.5 12 9.5 5 9.5-5"/><path d="m2.5 16 9.5 5 9.5-5"/></svg>
+    </button>
+    <button class="glass round" id="btnHome" type="button" aria-label="Centre on route or Burgos">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
+    </button>
+  </div>
 
   <div class="glass popover" id="layersPop" hidden>
     <div class="pop-title">Chart</div>
@@ -53,7 +55,8 @@
     <div class="pop-sep"></div>
     <label class="check"><input type="checkbox" id="chkNames" checked> Town &amp; village names</label>
     <label class="check"><input type="checkbox" id="chkPoints" checked> Aerodromes &amp; VRPs</label>
-    <label class="check"><input type="checkbox" id="chkMarks" checked> 2-minute marks</label>
+    <label class="check"><input type="checkbox" id="chkMarks" checked> 2-minute marks &amp; HATs</label>
+    <label class="check"><input type="checkbox" id="chkWinds" checked> Wind arrows</label>
     <div class="pop-sep"></div>
     <button class="btn wide" id="btnOffline" type="button">Save chart for offline</button>
     <div class="pop-note" id="chartInfo">AIP España · ENAIRE</div>
@@ -64,7 +67,10 @@
     <span class="dot"></span><span id="modeText">Tap the chart to add waypoints</span>
   </div>
 
-  <!-- Bottom sheet -->
+  <!-- Left panel (wide screens) / bottom sheet (phones) -->
+  <button class="glass panel-toggle" id="panelToggle" type="button" aria-label="Hide or show the flight plan panel">
+    <svg viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></svg>
+  </button>
   <section class="sheet glass-heavy" id="sheet" aria-label="Flight plan">
     <div class="grabber" id="grabber"><span></span></div>
 
@@ -73,6 +79,12 @@
         <button role="tab" data-mode="plan" class="on">Flight plan</button>
         <button role="tab" data-mode="mb">Mass &amp; Balance</button>
       </div>
+    </div>
+
+    <div class="planbar" id="planBar">
+      <label class="field callsign"><span>Callsign</span><input id="callsignInput" autocapitalize="characters" autocomplete="off" spellcheck="false"></label>
+      <button class="btn small" id="btnPlans" type="button">Plans</button>
+      <button class="btn small" id="btnWinds" type="button">Update winds</button>
     </div>
 
     <div class="summary" id="summary">
@@ -101,6 +113,7 @@
         <button role="tab" data-tab="route" class="on">Route</button>
         <button role="tab" data-tab="navlog">Navlog</button>
         <button role="tab" data-tab="fuel">Fuel</button>
+        <button role="tab" data-tab="brief">Briefing</button>
         <button role="tab" data-tab="profile" class="narrow-only">Profile</button>
       </div>
       <div class="segmented small" id="routeSel">
@@ -113,6 +126,7 @@
       <div class="panel" data-panel="route"></div>
       <div class="panel" data-panel="navlog" hidden></div>
       <div class="panel" data-panel="fuel" hidden></div>
+      <div class="panel" data-panel="brief" hidden></div>
       <div class="panel" data-panel="profile" hidden><div class="profile-panel"><canvas id="profileCanvasSheet"></canvas></div><p class="note" id="profileNoteSheet"></p></div>
       <div class="panel" data-panel="mb" hidden></div>
     </div>
@@ -127,6 +141,15 @@
     </div>
     <div class="profile-body"><canvas id="profileCanvas"></canvas></div>
   </section>
+
+  <div class="glass popover plans-pop" id="plansPop" hidden>
+    <div class="pop-title">Saved plans</div>
+    <div id="plansList"></div>
+    <div class="pop-sep"></div>
+    <button class="btn wide" id="btnSavePlan" type="button">Save current plan</button>
+    <button class="btn wide" id="btnNewPlan" type="button">New plan</button>
+    <label class="btn wide file-btn">Open navlog PDF…<input type="file" id="pdfInput" accept="application/pdf"></label>
+  </div>
 
   <div class="toast glass" id="toast" hidden></div>
 

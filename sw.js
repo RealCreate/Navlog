@@ -1,11 +1,11 @@
 // Offline support: app shell is precached; chart tiles are cached as they are viewed
 // (or saved in bulk with "Save chart for offline").
-const VERSION = 'navlog-shell-v2';
+const VERSION = 'navlog-shell-v3';
 const TERRAIN = 'navlog-terrain-v1';
 const TILES = 'navlog-tiles-v1';
 const SHELL = [
   './', 'index.html', 'styles.css', 'manifest.webmanifest',
-  'js/app.js', 'js/data.js', 'js/nav.js', 'js/pdf.js', 'js/sun.js', 'js/profile.js', 'js/places.js',
+  'js/app.js', 'js/data.js', 'js/nav.js', 'js/pdf.js', 'js/sun.js', 'js/profile.js', 'js/places.js', 'js/winds.js', 'js/weather.js', 'js/rules.js', 'js/plans.js', 'data/aip.json',
   'data/places.json', 'assets/mb-p2008-template.pdf',
   'vendor/leaflet/leaflet.js', 'vendor/leaflet/leaflet.css', 'vendor/pdf-lib/pdf-lib.min.js',
   'assets/navlog-template.pdf', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png',

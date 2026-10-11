@@ -49,19 +49,21 @@ export const PlacesLayer = L.Layer.extend({
       if (z < MIN_ZOOM[rank]) continue;
       if (lat < b.getSouth() || lat > b.getNorth() || lon < b.getWest() || lon > b.getEast()) continue;
       const p = map.latLngToContainerPoint([lat, lon]);
-      const size = rank === 0 ? 14 : rank === 1 ? 12.5 : 11;
-      const weight = rank === 0 ? 800 : rank === 1 ? 700 : 600;
+      // Chart-style labels: small, light, with a thin halo so they never overpower the chart.
+      const size = rank === 0 ? 11.5 : rank === 1 ? 10.5 : 9.5;
+      const weight = rank === 0 ? 700 : rank === 1 ? 600 : 500;
       ctx.font = `${weight} ${size}px -apple-system, "SF Pro Text", system-ui, sans-serif`;
       const text = rank === 0 ? name.toUpperCase() : name;
-      const w = ctx.measureText(text).width + 6;
-      const box = { x: p.x - w / 2, y: p.y - size - 6, w, h: size + 4 };
+      if (rank === 0) ctx.letterSpacing = '0.06em'; else ctx.letterSpacing = '0px';
+      const w = ctx.measureText(text).width + 4;
+      const box = { x: p.x - w / 2, y: p.y - size - 5, w, h: size + 3 };
       if (hit(box)) continue;
       boxes.push(box);
-      ctx.lineWidth = 3.5; ctx.strokeStyle = 'rgba(255,255,255,0.92)';
-      ctx.strokeText(text, p.x, p.y - size / 2 - 4);
-      ctx.fillStyle = rank === 0 ? '#1b1b1f' : '#26262b';
-      ctx.fillText(text, p.x, p.y - size / 2 - 4);
-      if (rank === 2) { ctx.beginPath(); ctx.arc(p.x, p.y, 2, 0, Math.PI * 2); ctx.fillStyle = '#26262b'; ctx.fill(); }
+      ctx.lineWidth = 2.5; ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+      ctx.strokeText(text, p.x, p.y - size / 2 - 3);
+      ctx.fillStyle = rank === 0 ? 'rgba(25,25,30,0.9)' : rank === 1 ? 'rgba(35,35,42,0.85)' : 'rgba(55,55,62,0.8)';
+      ctx.fillText(text, p.x, p.y - size / 2 - 3);
+      if (rank === 2) { ctx.beginPath(); ctx.arc(p.x, p.y, 1.5, 0, Math.PI * 2); ctx.fillStyle = 'rgba(55,55,62,0.7)'; ctx.fill(); }
     }
   },
 });

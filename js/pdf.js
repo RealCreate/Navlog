@@ -4,6 +4,7 @@
 // AOBT, ATOT, LDG, OFF, Squawk) are left blank, as in the Excel workbook.
 
 import { fmtMMSS, fmtVar, fmtAlt } from './nav.js';
+import { embedPlan } from './plans.js';
 
 const H = 595.32; // page height (A4 landscape)
 const BLOCK_TOPS = [227.4, 275.9, 324.3, 373.1, 421.6, 470.0, 519.2];
@@ -98,7 +99,18 @@ function drawRow(page, font, bold, cols, b, r) {
 
   full('tc', r.tc);
   up('var', fmtVar(r.var)); dn('var', r.mc, bold);
-  full('alt', fmtAlt(r.alt, r.altLabel));
+  const altText = r.altDisp || fmtAlt(r.alt, r.altLabel);
+  full('alt', altText);
+  if (r.vs) {
+    // climb / descent arrow next to the altitude (Helvetica has no arrow glyph, so draw it)
+    const size = 8;
+    const tw = font.widthOfTextAtSize(altText, size);
+    const [x0, x1] = cols.alt;
+    const cx = x0 + (x1 - x0 + tw) / 2 + 5, cy = H - (top + bottom) / 2;
+    const up = r.vs === 'up';
+    page.drawSvgPath(up ? 'M 0 -4 L 3.2 1 L -3.2 1 Z' : 'M 0 4 L 3.2 -1 L -3.2 -1 Z', { x: cx, y: cy, color: window.PDFLib.rgb(0, 0, 0), scale: 1 });
+    page.drawLine({ start: { x: cx, y: cy + (up ? -1 : 1) }, end: { x: cx, y: cy + (up ? -4 : 4) }, thickness: 1.1 });
+  }
   full('tas', r.tas);
   full('dir', r.wspd ? String(r.wdir).padStart(3, '0') : '');
   full('spd', r.wspd ? r.wspd : '');
@@ -113,7 +125,7 @@ function drawRow(page, font, bold, cols, b, r) {
  * pages: [{ header: {...}, rows: [...], firstName: 'LEBG' }]
  * Returns Uint8Array of the filled PDF.
  */
-export async function buildNavlogPdf(sheets) {
+export async function buildNavlogPdf(sheets, plan) {
   const { PDFDocument, StandardFonts } = window.PDFLib;
   const out = await PDFDocument.create();
   const src = await PDFDocument.load(await template());
@@ -145,6 +157,8 @@ export async function buildNavlogPdf(sheets) {
       });
     }
   }
+  if (plan) embedPlan(out, plan);
+  out.setTitle(`Navlog ${sheets[0]?.header?.dep || ''}-${sheets[0]?.header?.dest || ''}`);
   return out.save();
 }
 
@@ -171,7 +185,7 @@ let mbTemplateBytes = null;
  * mb: { date, reg, studentCode, weather, notams, rows: { empty, pilot, copilot, baggage, fuel, trip }
  *        each [mass, arm, moment], to: [mass, cg, moment], ldg: [mass, cg, moment] }
  */
-export async function buildMbPdf(mb) {
+export async function buildMbPdf(mb, plan) {
   const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
   if (!mbTemplateBytes) mbTemplateBytes = await (await fetch('assets/mb-p2008-template.pdf')).arrayBuffer();
   const doc = await PDFDocument.load(mbTemplateBytes);
@@ -211,5 +225,6 @@ export async function buildMbPdf(mb) {
     cell(n(r[1], 3), A, t + 14, b, bold, 11, r[4] ? undefined : red);
     cell(n(r[2], 1), M, t, b, bold, 11);
   }
+  if (plan) embedPlan(doc, plan);
   return doc.save();
 }

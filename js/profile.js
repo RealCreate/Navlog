@@ -120,13 +120,14 @@ export function drawProfile(canvas, { planned, terrain, color = '#d1009a' }) {
   const maxTerr = terrain && terrain.length ? Math.max(...terrain.map((t) => t.corridor)) : 0;
   const maxAlt = Math.max(maxTerr, ...planned.map((p) => p.alt));
   const top = Math.ceil((maxAlt + 1500) / 1000) * 1000;
-  const padL = 44, padR = 14, padT = 22, padB = 22;
+  const padL = 36, padR = 12, padT = 18, padB = 18;
   const X = (d) => padL + (d / totalD) * (w - padL - padR);
   const Y = (a) => padT + (1 - a / top) * (h - padT - padB);
 
   // grid + altitude labels
   ctx.font = font; ctx.fillStyle = ink; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-  const stepA = top > 8000 ? 2000 : 1000;
+  const plotH = h - padT - padB;
+  const stepA = [1000, 2000, 2500, 5000].find((st) => (plotH / (top / st)) >= 16) || 5000;
   for (let a = 0; a <= top; a += stepA) {
     ctx.strokeStyle = grid; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(padL, Y(a)); ctx.lineTo(w - padR, Y(a)); ctx.stroke();
