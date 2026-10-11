@@ -34,7 +34,11 @@ jobs:
       - name: Find current VFR chart editions (AIP España)
         id: charts
         run: |
-          curl -fsSL --retry 3 https://aip.enaire.es/AIP/CartasInsigniaImpresas-es.html -o page.html
+          # If the AIP page is unreachable, keep the last chart tiles built (restored from the cache below).
+          if ! curl -fsSL --retry 4 --retry-delay 10 https://aip.enaire.es/AIP/CartasInsigniaImpresas-es.html -o page.html; then
+            echo "AIP page unreachable — using the last chart tiles" >&2
+            echo "urls=" >> "$GITHUB_OUTPUT"; echo "key=tiles-unreachable-${{ github.run_id }}" >> "$GITHUB_OUTPUT"; exit 0
+          fi
           urls=""
           # LE1 Norte covers Burgos; LE4 Centronorte covers the area to the south.
           for sheet in LE4_CENTRONORTE LE1_NORTE; do
@@ -52,17 +56,18 @@ jobs:
         with:
           path: tiles
           key: ${{ steps.charts.outputs.key }}
+          restore-keys: tiles-
 
       - name: Install GDAL
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.cache.outputs.cache-hit != 'true' && steps.charts.outputs.urls != ''
         run: sudo apt-get update -qq && sudo apt-get install -y -qq gdal-bin python3-gdal
 
       - name: Build chart tiles
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: bash tools/build-tiles.sh tiles ${{ steps.charts.outputs.urls }}
+        if: steps.cache.outputs.cache-hit != 'true' && steps.charts.outputs.urls != ''
+        run: rm -rf tiles && bash tools/build-tiles.sh tiles ${{ steps.charts.outputs.urls }}
 
       - name: Upload chart previews
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.cache.outputs.cache-hit != 'true' && steps.charts.outputs.urls != ''
         uses: actions/upload-artifact@v4
         with:
           name: chart-previews
