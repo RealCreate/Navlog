@@ -26,9 +26,9 @@ jobs:
                    'https://ama.aemet.es/en' \
                    'https://www.aemet.es/es/eltiempo/prediccion/aviacion' \
                    'https://aviationweather.gov/data/products/swl/ll_12_cl_new.gif' ; do
-            code=$(curl -s -o /dev/null -w '%{http_code}' -A "$UA" -L "$u"); echo "$code $u" | tee -a out/probe.txt
+            code=$(curl -s --max-time 20 -o /dev/null -w '%{http_code}' -A "$UA" -L "$u" || true); echo "$code $u" | tee -a out/probe.txt
           done
-          curl -s -A "$UA" 'https://opendata.aemet.es/opendata/api/mapasygraficos/analisis' | head -c 400 > out/aemet-nokey.txt
+          curl -s --max-time 20 -A "$UA" 'https://opendata.aemet.es/opendata/api/mapasygraficos/analisis' | head -c 400 > out/aemet-nokey.txt || true
       - name: Publish to previews branch
         run: |
           cd out
