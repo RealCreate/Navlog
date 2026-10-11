@@ -5,19 +5,24 @@
 #   tools/build-tiles.sh <out-dir> <zip-url> [<zip-url> ...]
 #
 # Later sheets are drawn on top of earlier ones where they overlap.
+# CLIP_CENTRES / CLIP_NM: keep only the area within CLIP_NM of the centres (default: 200 NM around
+# LEBG and LERJ); sheets outside it are skipped.
 set -euo pipefail
+CLIP_CENTRES="${CLIP_CENTRES:-42.3575,-3.6136;42.4606,-2.3206}"
+CLIP_NM="${CLIP_NM:-200}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
 
 OUT="$1"; shift
 WORK="$(mktemp -d)"
 ZMIN="${ZMIN:-6}"
 ZMAX="${ZMAX:-12}"
 mkdir -p "$OUT" "$OUT/../chart-previews"
+python3 "$HERE/clip-area.py" make "$WORK/area.geojson" "$CLIP_CENTRES" "$CLIP_NM"
 
 warped=()
 names=()
 for url in "$@"; do
   name="$(basename "$url" .zip)"
-  names+=("$name")
   echo "::group::Download $name"
   curl -fSL --retry 3 -o "$WORK/$name.zip" "$url"
   mkdir -p "$WORK/$name"
@@ -32,14 +37,19 @@ for url in "$@"; do
   gdalinfo "$tif" | grep -vE '^\s+[0-9]+: ' | head -80
   echo "::endgroup::"
 
+  if ! python3 "$HERE/clip-area.py" hits "$WORK/area.geojson" "$tif"; then echo "$name: outside the area, skipped"; continue; fi
+  names+=("$name")
+
   src="$tif"
   if gdalinfo "$tif" | grep -q 'Color Table'; then
     gdal_translate -q -expand rgb "$tif" "$WORK/$name-rgb.tif" -co TILED=YES -co COMPRESS=DEFLATE
     src="$WORK/$name-rgb.tif"
   fi
 
-  # Reproject to Web Mercator with an alpha band so the area outside the sheet is transparent.
+  # Reproject to Web Mercator with an alpha band so the area outside the sheet (and outside the
+  # 200 NM area) is transparent.
   gdalwarp -q -overwrite -t_srs EPSG:3857 -r cubic -dstalpha -multi -wo NUM_THREADS=ALL_CPUS \
+    -cutline "$WORK/area.geojson" \
     -co TILED=YES -co COMPRESS=DEFLATE -co BIGTIFF=IF_SAFER "$src" "$WORK/$name-3857.tif"
   warped+=("$WORK/$name-3857.tif")
 
@@ -51,7 +61,7 @@ gdalbuildvrt -q "$WORK/mosaic.vrt" "${warped[@]}"
 gdalinfo "$WORK/mosaic.vrt" | head -30
 
 echo "::group::gdal2tiles z$ZMIN-$ZMAX"
-gdal2tiles.py --xyz -z "$ZMIN-$ZMAX" -w none -r lanczos \
+gdal2tiles.py --xyz -z "$ZMIN-$ZMAX" -w none -r lanczos --exclude \
   --tiledriver=WEBP --webp-quality=92 \
   --processes="$(nproc)" "$WORK/mosaic.vrt" "$OUT"
 echo "::endgroup::"

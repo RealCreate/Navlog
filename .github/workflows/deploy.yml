@@ -40,14 +40,15 @@ jobs:
             echo "urls=" >> "$GITHUB_OUTPUT"; echo "key=tiles-unreachable-${{ github.run_id }}" >> "$GITHUB_OUTPUT"; exit 0
           fi
           urls=""
-          # LE1 Norte covers Burgos; LE4 Centronorte covers the area to the south.
-          for sheet in LE4_CENTRONORTE LE1_NORTE; do
+          # Every sheet within 200 NM of LEBG and LERJ (tools/build-tiles.sh clips to that area);
+          # later sheets are drawn on top: LE1 Norte (Burgos) last.
+          for sheet in LE5_CENTROSUR LE3_ESTE LE4_CENTRONORTE LE2_NORDESTE LE1_NORTE; do
             path=$(grep -oiE "recursos/descargas/VFR500/[0-9]{4}_${sheet}\.zip" page.html | head -1)
             if [ -z "$path" ]; then echo "Sheet $sheet not found on the AIP page" >&2; exit 1; fi
             urls="$urls https://aip.enaire.es/$path"
           done
           echo "urls=$urls" >> "$GITHUB_OUTPUT"
-          echo "key=tiles-$(echo "$urls" | sha1sum | cut -c1-12)-$(sha1sum tools/build-tiles.sh | cut -c1-8)" >> "$GITHUB_OUTPUT"
+          echo "key=tiles-$(echo "$urls" | sha1sum | cut -c1-12)-$(cat tools/build-tiles.sh tools/clip-area.py | sha1sum | cut -c1-8)" >> "$GITHUB_OUTPUT"
           echo "Charts:$urls"
 
       - name: Restore chart tiles
