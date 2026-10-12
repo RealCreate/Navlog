@@ -1113,7 +1113,7 @@ function headerFor(key) {
   const freq = freqs.join(' | ');
   if (key === 'main') {
     return {
-      date, callsign: f.callsign, reg: f.reg, weather: f.weather, freq,
+      date, callsign: f.callsign, reg: f.reg, weather: effWeather(f.weather), freq,
       dep: mainDep?.icao || state.main.waypoints[0]?.name || '', dest: mainDest?.icao || state.main.waypoints.at(-1)?.name || '',
       alt: altDest?.icao || '',
       elevDep: mainDep?.elev ?? '', elevDest: mainDest?.elev ?? '', elevAlt: altDest?.elev ?? '',
@@ -1123,7 +1123,7 @@ function headerFor(key) {
   }
   const trip = result.alt.totals.trip;
   return {
-    date, callsign: f.callsign, reg: f.reg, weather: f.weather, freq,
+    date, callsign: f.callsign, reg: f.reg, weather: effWeather(f.weather), freq,
     dep: mainDest?.icao || '', dest: altDest?.icao || state.alt.waypoints.at(-1)?.name || '', alt: '',
     elevDep: mainDest?.elev ?? '', elevDest: altDest?.elev ?? '', elevAlt: '',
     tom: mb?.lm, lmDest: mb?.lmAlt, lmAlt: '',
@@ -1141,7 +1141,7 @@ function renderNavlog() {
     <div class="field"><span>Departure</span><b>${esc(h.dep) || '—'}</b></div>
     <div class="field"><span>Destination</span><b>${esc(h.dest) || '—'}</b></div>
     <div class="field"><span>Alternate</span><b>${esc(h.alt) || '—'}</b></div>
-    <label class="field" style="grid-column: 1 / -1"><span>Weather info</span><input data-ff="weather" value="${esc(f.weather)}" placeholder="METAR / TAF summary"></label>
+    <label class="field" style="grid-column: 1 / -1"><span>Weather info</span><input data-ff="weather" value="${esc(effWeather(f.weather))}" placeholder="METAR / TAF summary"></label>
   </div>`;
   if (nl.warnings.length) html += `<div class="warnings">${nl.warnings.map(esc).join('<br>')}</div>`;
   html += `<div class="nl-wrap"><table class="nl"><thead>
@@ -1375,8 +1375,8 @@ function renderMB() {
     </div>
   <div class="group-title"><span>Printed on the sheet</span></div>
   <div class="group"><div class="row wrap">
-    <label class="field full"><span>Weather</span><input data-ff="weather" value="${esc(f.weather)}" placeholder="METAR / TAF summary"></label>
-    <label class="field full"><span>NOTAMs</span><input data-mb="notams" value="${esc(mbs.notams)}" placeholder="Relevant NOTAMs"></label>
+    <label class="field full"><span>Weather</span><input data-ff="weather" value="${esc(effWeather(f.weather))}" placeholder="METAR / TAF summary"></label>
+    <label class="field full"><span>NOTAMs</span><input data-mb="notams" value="${esc(effNotams(mbs.notams))}" placeholder="Relevant NOTAMs"></label>
   </div></div>
   <button class="btn primary wide" data-act="mbpdf">Download M&amp;B sheet (PDF)</button>
   <p class="note">Arms, limits and envelope from the ${esc(ac.sheet)} (fleet M&amp;B overview, 19/07/2025). Fuel ${ac.unit === 'lb' ? '6 lb/US gal' : '0.72 kg/L'}. Masses are entered in kg${ac.unit === 'lb' ? ' and converted to lb (× 2.20462)' : ''}.</p>`;
@@ -1409,7 +1409,7 @@ async function downloadMbPdf() {
   try {
     const bytes = await buildMbPdf(m, {
       date: flightTime().toLocaleDateString('en-GB'), reg: f.reg, studentCode: state.mb.studentCode, signature: state.settings.signature,
-      weather: f.weather, notams: state.mb.notams, perf: perfResults(),
+      weather: effWeather(f.weather), notams: effNotams(state.mb.notams), perf: perfResults(),
     }, planData());
     saveBlob(bytes, `MB_${f.reg || f.type}_${flightTime().toISOString().slice(0, 10)}.pdf`);
     toast('M&B sheet ready');
@@ -1720,12 +1720,16 @@ async function addBulletin(file) {
     // school practice: the bulletin identifier goes in the NOTAM box, and as the MET source when it includes METAR/TAF
     const id = parsed.id ? `ICARO ${parsed.id}` : 'ICARO bulletin';
     state.mb.notams = id;
-    const hasMet = Object.values(parsed.ads).some((a) => a.metar || a.taf);
-    if (hasMet && (!state.flight.weather || /^ICARO/.test(state.flight.weather))) state.flight.weather = id;
+    if (!state.flight.weather || /^ICARO/i.test(state.flight.weather)) state.flight.weather = id;
     toast(`Bulletin ${parsed.id || ''} added`);
     update({ rerenderPanels: true });
   } catch (err) { console.error(err); toast('Could not read the bulletin: ' + err.message); }
 }
+// The bulletin identifier goes on the navlog (weather box) and the M&B sheet (weather + NOTAM boxes),
+// unless the student has typed something of their own there.
+const bulId = () => (bulletin ? (bulletin.parsed && bulletin.parsed.id ? `ICARO ${bulletin.parsed.id}` : 'ICARO bulletin') : '');
+const effWeather = (w) => (!w || /^ICARO/i.test(w) ? bulId() || w || '' : w);
+const effNotams = (n) => (!n || /^ICARO/i.test(n) ? bulId() || n || '' : n);
 function removeBulletin() { bulletin = null; try { localStorage.removeItem(BULLETIN_KEY); } catch { /* ignore */ } update({ rerenderPanels: true }); }
 /** NOTAM flags for the flight currently loaded in the planner. */
 function bulletinFlags() {
@@ -1805,6 +1809,11 @@ function renderBriefing() {
     <label class="btn ${bulletin ? '' : 'primary'}">${bulletin ? 'Replace' : 'Add bulletin'}<input type="file" accept="application/pdf,.pdf" data-act="bulFile" hidden></label></div>
     <div class="row"><a class="btn small" href="https://notampib.enaire.es/icaro" target="_blank" rel="noopener">Open ICARO ↗</a><span class="grow"></span>${bulletin ? '<button class="btn small danger" data-act="bulRemove">Remove</button>' : ''}</div></div>`;
   html += `<button class="btn primary wide" data-act="briefPdf">Download briefing (PDF)${state.mission ? ' · whole mission' : ''}</button>`;
+  html += `<button class="btn wide" data-act="sepPdf" style="margin-top:8px">Separate files · ${state.mission ? 'navlogs, alternates and M&amp;B' : 'navlog, alternate and M&amp;B'}</button>`;
+  if (sepFiles && sepFiles.length) {
+    html += `<div class="group" id="sepFiles" style="margin-top:8px"><div class="row"><span class="grow"><b>${sepFiles.length} separate PDFs</b><br><span class="label">Made ${esc(sepFiles.made || '')} — make them again after any change. “Save all” opens the share sheet: choose Save to Files.</span></span><button class="btn primary" data-act="sepSave">Save all</button></div>
+      ${sepFiles.map((f, i) => `<div class="row"><span class="grow" style="font-size:13px;word-break:break-all">${esc(f.name)}</span><button class="btn small" data-act="sepOne" data-i="${i}">Download</button></div>`).join('')}</div>`;
+  }
   html += `<div class="group-title"><span>Go / no-go · ${bad ? `<span class="badge bad">${bad} no-go</span>` : '<span class="badge ok">no blockers</span>'} ${warn ? `<span class="badge warn">${warn} to check</span>` : ''}</span></div>`;
   html += issues.length
     ? `<ul class="issues">${issues.map((i) => `<li class="${i.level}"><span class="ic">${i.level === 'bad' ? '✕' : i.level === 'warn' ? '!' : 'i'}</span><span>${esc(i.text)}</span></li>`).join('')}</ul>`
@@ -1836,7 +1845,7 @@ function renderBriefing() {
     <div class="row"><span class="grow">En-route NOTAMs (Phase 3 manual)</span><a class="btn small" href="https://insigniavfr.enaire.es" target="_blank" rel="noopener">Insignia VFR ↗</a></div>
     ${bulletin ? '' : '<div class="row"><span class="grow label">No bulletin yet — add it at the top of this step.</span></div>'}
     ${B.nflags.length ? `<ul class="issues">${B.nflags.map((i) => `<li class="${i.level}"><span class="ic">${i.level === 'bad' ? '✕' : i.level === 'warn' ? '!' : 'i'}</span><span>${esc(i.text)}</span></li>`).join('')}</ul>` : bulletin ? '<div class="row"><span class="grow label">Nothing in the bulletin for your aerodromes, times or route.</span></div>' : ''}
-    <div class="row wrap"><label class="field full"><span>NOTAM bulletin code / relevant NOTAMs (printed on the M&amp;B and the briefing)</span><input data-mb="notams" value="${esc(state.mb.notams)}" placeholder="e.g. ICARO 3123651"></label></div>
+    <div class="row wrap"><label class="field full"><span>NOTAM bulletin code / relevant NOTAMs (printed on the M&amp;B and the briefing)</span><input data-mb="notams" value="${esc(effNotams(state.mb.notams))}" placeholder="e.g. ICARO 3123651"></label></div>
   </div>`;
 
   // 3. ATC flight plan
@@ -1945,6 +1954,10 @@ panels.brief.addEventListener('click', (e) => {
   if (e.target.closest('[data-act=wx]')) loadWeather(true);
   if (e.target.closest('[data-act=toMb]')) document.querySelector('#modes [data-mode=mb]').click();
   if (e.target.closest('[data-act=briefPdf]')) downloadBriefing();
+  if (e.target.closest('[data-act=sepPdf]')) downloadBriefing(true);
+  if (e.target.closest('[data-act=sepSave]')) saveAllSeparate();
+  const one = e.target.closest('[data-act=sepOne]');
+  if (one && sepFiles) { const f = sepFiles[+one.dataset.i]; if (f) saveBlob(f.blob, f.name); }
   if (e.target.closest('[data-act=bulRemove]')) removeBulletin();
   const wr = e.target.closest('[data-act=wxUpRemove]');
   if (wr) removeWxUpload(wr.dataset.kind);
@@ -2310,7 +2323,7 @@ function update(opts = {}) {
 /* ---------------- PDF ---------------- */
 
 function saveBlob(bytes, name) {
-  const blob = new Blob([bytes], { type: 'application/pdf' });
+  const blob = bytes instanceof Blob ? bytes : new Blob([bytes], { type: 'application/pdf' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url; a.download = name;
@@ -2786,7 +2799,7 @@ async function downloadMission() {
         mbDone.add(key);
         const mbBytes = withLeg(leg, f.fob, () => (result.mb ? buildMbPdf(result.mb, {
           date: flightTime().toLocaleDateString('en-GB'), reg: state.flight.reg, studentCode: state.mb.studentCode, signature: state.settings.signature,
-          weather: state.flight.weather, notams: state.mb.notams, perf: perfResults(),
+          weather: effWeather(state.flight.weather), notams: effNotams(state.mb.notams), perf: perfResults(),
         }) : null));
         if (mbBytes) await add(await mbBytes);
       }
@@ -2809,12 +2822,12 @@ function legPack(fob) {
   const meta = {
     title: `Briefing · ${B.dep?.icao || '?'} -> ${B.dest?.icao || '?'} · ${t.toLocaleDateString('en-GB')} · ${f.callsign || ''}`,
     flightLine: `${f.callsign || 'Callsign —'} · ${fleetType(f.type).name} ${f.reg || ''} · T/O ${zl(t)} · LDG ${zl(B.ldg)} · ${tot.dist} NM · ${fmtHMS(tot.timeSec)} · trip ${tot.trip} L · FOB ${fob ?? f.fob} L${f.solo ? ' · SOLO' : ''}`,
-    notams: state.mb.notams, rows: result.main.rows, tem: state.tem, zl, metarSummary, mmss: fmtMMSS,
+    notams: effNotams(state.mb.notams), rows: result.main.rows, tem: state.tem, zl, metarSummary, mmss: fmtMMSS,
     totals: `${tot.dist} NM · ${fmtHMS(tot.timeSec)} · ${tot.trip} L`,
   };
   const sheets = [{ header: headerFor('main'), rows: result.main.rows }];
   if (result.alt.rows.length) sheets.push({ header: headerFor('alt'), rows: result.alt.rows });
-  const mbArgs = result.mb ? [result.mb, { date: t.toLocaleDateString('en-GB'), reg: f.reg, studentCode: state.mb.studentCode, signature: state.settings.signature, weather: f.weather, notams: state.mb.notams, perf: B.perf }] : null;
+  const mbArgs = result.mb ? [result.mb, { date: t.toLocaleDateString('en-GB'), reg: f.reg, studentCode: state.mb.studentCode, signature: state.settings.signature, weather: effWeather(f.weather), notams: effNotams(state.mb.notams), perf: B.perf }] : null;
   const routes = [{ wps: clone(state.main.waypoints), rows: clone(result.main.rows), color: '#d1009a' }];
   if (state.alt.waypoints.length > 1) routes.push({ wps: clone(state.alt.waypoints), rows: clone(result.alt.rows), color: '#0a84ff', alt: true });
   const mapData = state.main.waypoints.length > 1 ? { routes, title: `${B.dep?.icao || ''} -> ${B.dest?.icao || ''}${B.alt ? ` (alternate ${B.alt.icao})` : ''}` } : null;
@@ -2822,18 +2835,28 @@ function legPack(fob) {
   return { B, meta, sheets: result.main.rows.length ? sheets : null, mbArgs, mapData, charts: aemetCharts(t, cruise) };
 }
 
-async function downloadBriefing() {
+// Separate PDFs made by "Separate files": kept until the next build so they can be saved in one go
+let sepFiles = null;
+async function saveAllSeparate() {
+  if (!sepFiles || !sepFiles.length) return;
+  const files = sepFiles.map((f) => new File([f.blob], f.name, { type: 'application/pdf' }));
+  if (navigator.canShare && navigator.canShare({ files })) {
+    try { await navigator.share({ files }); return; } catch (err) { if (err && err.name === 'AbortError') return; }
+  }
+  for (const f of sepFiles) { saveBlob(f.blob, f.name); await new Promise((r) => setTimeout(r, 700)); }
+}
+async function downloadBriefing(separate = false) {
   const { PDFDocument } = window.PDFLib;
   syncActiveLeg();
   const m = state.mission;
-  toast(m ? 'Building the mission briefing…' : 'Building the briefing…');
+  toast(separate ? 'Building the separate files…' : m ? 'Building the mission briefing…' : 'Building the briefing…');
   // weather for every aerodrome of the flight(s), not only the open route
   const ads = new Set();
   const collect = () => [endpoint('main', 0), endpoint('main', -1), endpoint('alt', -1)].filter(Boolean).forEach((a) => ads.add(a.icao));
   if (m) { const figs0 = missionFigures(); m.legs.forEach((l) => withLeg(l, figs0.get(l.id).fob, collect)); } else collect();
   const keepWx = wxState;
   try {
-    const extra = await fetchWeather([...ads]).catch(() => null);
+    const extra = separate ? null : await fetchWeather([...ads]).catch(() => null);
     if (extra) wxState = { ...wxState, data: { ...(wxState.data || {}), ...extra } };
     const out = await PDFDocument.create();
     const F = await pdfFonts(out);
@@ -2853,12 +2876,34 @@ async function downloadBriefing() {
       for (const l of m.legs) {
         const f = figs.get(l.id);
         const p = withLeg(l, f.fob, () => legPack(f.fob));
+        p.label = l.label;
         p.withMb = !mbDone.has(m.type === 'local' ? 'local' : l.id);
         mbDone.add(m.type === 'local' ? 'local' : l.id);
         packs.push(p);
       }
     } else {
       const p = legPack(); p.withMb = true; packs.push(p);
+    }
+    if (separate) {
+      // one PDF per document, as the school's platform wants them: navlog, alternate navlog, M&B
+      const files = [];
+      const safe = (t) => String(t || '').replace(/[^\w-]+/g, '_').replace(/^_+|_+$/g, '');
+      const d0 = flightTime().toISOString().slice(0, 10);
+      for (const p of packs) {
+        const pre = p.label ? `${safe(p.label)}_` : '';
+        const dep = p.B.dep?.icao || '', dest = p.B.dest?.icao || '', alt = p.B.alt?.icao || '';
+        if (p.sheets) {
+          files.push({ name: `${pre}Navlog_${dep}-${dest}_${d0}.pdf`, bytes: await buildNavlogPdf([p.sheets[0]]) });
+          if (p.sheets[1]) files.push({ name: `${pre}Alternate_${dest}-${alt}_${d0}.pdf`, bytes: await buildNavlogPdf([p.sheets[1]]) });
+        }
+        if (p.withMb && p.mbArgs) files.push({ name: `${m && m.type === 'local' ? '' : pre}MB_${state.flight.reg || ''}_${d0}.pdf`, bytes: await buildMbPdf(...p.mbArgs) });
+      }
+      sepFiles = files.map((f) => ({ name: f.name, blob: new Blob([f.bytes], { type: 'application/pdf' }) }));
+      sepFiles.made = zl(new Date());
+      update({ rerenderPanels: true });
+      setTimeout(() => document.getElementById('sepFiles')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
+      toast(`${files.length} files ready — tap “Save all”`);
+      return;
     }
     let bulletinAdded = false, chartsMissing = false;
     const once = new Set(); // the surface analysis and the student's own charts go in once per PDF
