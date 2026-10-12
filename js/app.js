@@ -610,6 +610,7 @@ function drawMissionGuide() {
 
 function drawRoutes() {
   routeLayer.clearLayers();
+  hatJobs = [];
   drawMissionGuide();
   for (const key of ['alt', 'main']) {
     const r = state[key];
@@ -675,6 +676,7 @@ function drawRoutes() {
       });
     });
   }
+  placeHats();
 }
 
 function lerp(a, b, f) { return [a.lat + (b.lat - a.lat) * f, a.lon + (b.lon - a.lon) * f]; }
@@ -731,12 +733,50 @@ function drawLegAnnotations(key, rows, wps, isAlt) {
     // HAT on the leg, numbered: Heading · Altitude · Time (alternate legs A1, A2…)
     if (z < 9) continue;
     const pxLen = map.latLngToLayerPoint([a.lat, a.lon]).distanceTo(map.latLngToLayerPoint([b.lat, b.lon]));
-    if (pxLen < 110) continue; // too short at this zoom: zoom in to see its HAT
+    if (pxLen < 70) continue; // too short at this zoom: zoom in to see its HAT
     const ete = legRows.reduce((t, r) => t + r.eteSec, 0);
-    L.marker(lerp(a, b, 0.5), {
+    hatJobs.push({ a, b, marker: L.marker(lerp(a, b, 0.5), {
       pane: 'marks', interactive: false,
       icon: L.divIcon({ className: '', iconSize: [0, 0], html: `<span class="hat ${isAlt ? 'alt' : ''}"><b class="hn">${isAlt ? 'A' : ''}${i}</b><span class="hv">${String(last.mh).padStart(3, '0')}°</span><span class="hv">${last.altDisp || fmtAlt(last.alt, last.altLabel)}</span><span class="hv">${fmtMMSS(ete)}</span></span>` }),
-    }).addTo(routeLayer);
+    }).addTo(routeLayer) });
+  }
+}
+
+// HAT boxes on the map: each tries spots along its leg, either side, and takes the one that covers
+// no waypoint, name, TOC/TOD label or other HAT (or the least crowded).
+var hatJobs = []; // var: drawRoutes may run before this line during start-up
+function placeHats() {
+  const jobs = hatJobs; hatJobs = [];
+  if (!jobs.length) return;
+  const cRect = map.getContainer().getBoundingClientRect();
+  const rel = (el) => { const r = el.getBoundingClientRect(); return { x: r.left - cRect.left, y: r.top - cRect.top, w: r.width, h: r.height }; };
+  const placed = [...map.getContainer().querySelectorAll('.wpt-label, .cd-label')].map(rel).filter((b) => b.w > 0);
+  const cp = (ll) => map.latLngToContainerPoint(Array.isArray(ll) ? ll : [ll.lat, ll.lon]);
+  const rings = [], segs = [];
+  for (const key of ['main', 'alt']) {
+    const w = state[key].waypoints.map(cp);
+    w.forEach((p, i) => { rings.push(p); if (i) segs.push([w[i - 1], p]); });
+  }
+  const ov = (a, b) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+  const crosses = (bx, A, B) => { for (let t = 0; t <= 1; t += 0.05) { const x = A.x + (B.x - A.x) * t, y = A.y + (B.y - A.y) * t; if (x > bx.x && x < bx.x + bx.w && y > bx.y && y < bx.y + bx.h) return true; } return false; };
+  for (const j of jobs) {
+    const el = j.marker.getElement()?.querySelector('.hat'); if (!el) continue;
+    const W = el.offsetWidth, H = el.offsetHeight;
+    const A = cp(j.a), B = cp(j.b);
+    const dx = B.x - A.x, dy = B.y - A.y, L0 = Math.hypot(dx, dy) || 1, nx = -dy / L0, ny = dx / L0;
+    let pick = null;
+    for (const f of [0.5, 0.38, 0.62, 0.28, 0.72]) for (const side of [-1, 1]) for (const off of [26, 48, 74]) {
+      const cx = A.x + dx * f + side * nx * off, cy = A.y + dy * f + side * ny * off;
+      const bx = { x: cx - W / 2, y: cy - H / 2, w: W, h: H };
+      let c = Math.abs(f - 0.5) * 400 + (off - 26) * 6 + (side === 1 ? 10 : 0);
+      for (const o of placed) c += ov(bx, o) * 30;
+      for (const r of rings) c += ov(bx, { x: r.x - 12, y: r.y - 12, w: 24, h: 24 }) * 30;
+      for (const sg of segs) if (crosses(bx, sg[0], sg[1])) c += 900;
+      if (!pick || c < pick.c) pick = { c, cx, cy, bx };
+    }
+    placed.push(pick.bx);
+    j.marker.setLatLng(map.containerPointToLatLng([pick.cx, pick.cy]));
+    el.style.setProperty('transform', 'translate(-50%, -50%)', 'important');
   }
 }
 

@@ -85,11 +85,16 @@ export async function renderRouteMap(routes, { width = 2400, height = 1650, titl
   };
 
   // HAT box, numbered per leg: [n | heading | altitude | time]
-  const hatBox = (n, parts, cx, cy, col) => {
+  const hatSize = (n, parts) => {
     const size = 25 * s, padX = 10 * s, h = size * 1.5;
     g.font = `800 ${size}px Helvetica, Arial, sans-serif`;
     const cells = [n, ...parts].map((t) => ({ t, w: g.measureText(t).width + 2 * padX }));
-    const W = cells.reduce((t, c) => t + c.w, 0);
+    return { cells, W: cells.reduce((t, c) => t + c.w, 0), h };
+  };
+  const hatBox = (n, parts, cx, cy, col) => {
+    const { cells, W, h } = hatSize(n, parts);
+    const size = 25 * s;
+    g.font = `800 ${size}px Helvetica, Arial, sans-serif`;
     let x = cx - W / 2; const y = cy - h / 2;
     g.save();
     g.shadowColor = 'rgba(0,0,0,0.3)'; g.shadowBlur = 6 * s;
@@ -105,7 +110,34 @@ export async function renderRouteMap(routes, { width = 2400, height = 1650, titl
     g.strokeStyle = col; g.lineWidth = 3 * s; g.beginPath(); g.roundRect ? g.roundRect(cx - W / 2, y, W, h, 8 * s) : g.rect(cx - W / 2, y, W, h); g.stroke();
     g.restore();
   };
+  const labelSize = (text, size = 22) => { g.font = `700 ${size * s}px Helvetica, Arial, sans-serif`; return { w: g.measureText(text).width + 12 * s, h: size * s * 1.35 }; };
 
+  // Labels are placed after every track is drawn, so none covers a waypoint, another label or a HAT:
+  // each one tries several spots and takes the free one (or the least crowded).
+  const placed = [];   // boxes already used {x, y, w, h}
+  const circles = [];  // waypoint rings {x, y, r}
+  const segs = [];     // track segments [A, B]
+  const overlap = (a, b) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+  const segHits = (bx, A, B) => { // does segment AB cross box bx? (sampled)
+    for (let t = 0; t <= 1; t += 0.05) { const x = A.x + (B.x - A.x) * t, y = A.y + (B.y - A.y) * t; if (x > bx.x && x < bx.x + bx.w && y > bx.y && y < bx.y + bx.h) return true; }
+    return false;
+  };
+  const cost = (bx, ownSegs = []) => {
+    let c = 0;
+    for (const o of placed) c += overlap(bx, o) * 40;
+    for (const ci of circles) { const r = ci.r * 1.3; c += overlap(bx, { x: ci.x - r, y: ci.y - r, w: 2 * r, h: 2 * r }) * 40; }
+    for (const sg of segs) if (!ownSegs.includes(sg) && segHits(bx, sg[0], sg[1])) c += 1500 * s * s;
+    for (const sg of ownSegs) if (segHits(bx, sg[0], sg[1])) c += 600 * s * s;
+    if (bx.x < 0 || bx.y < 0 || bx.x + bx.w > width || bx.y + bx.h > height) c += 1e7;
+    return c;
+  };
+  const best = (cands, ownSegs) => {
+    let pick = null;
+    for (const cd of cands) { const c = cost(cd.box, ownSegs) + (cd.pen || 0); if (!pick || c < pick.c) pick = { ...cd, c }; if (c === 0 && !cd.pen) break; }
+    return pick;
+  };
+
+  const jobs2 = [];
   for (const r of routes) {
     const col = r.color;
     const wp = r.wps.map(P);
@@ -113,7 +145,9 @@ export async function renderRouteMap(routes, { width = 2400, height = 1650, titl
     const path = () => { g.beginPath(); wp.forEach((p, i) => (i ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y))); };
     halo(path, 11 * s);
     g.save(); g.strokeStyle = col; g.lineWidth = 5 * s; g.lineJoin = 'round'; g.setLineDash(r.alt ? [22 * s, 12 * s] : []); path(); g.stroke(); g.restore();
-    // ticks, TOC/TOD and HATs per leg
+    const legSegs = [];
+    for (let i = 1; i < wp.length; i++) { const sg = [wp[i - 1], wp[i]]; segs.push(sg); legSegs.push(sg); }
+    // ticks, TOC/TOD bars per leg (labels later)
     for (let i = 1; i < wp.length; i++) {
       const A = wp[i - 1], B = wp[i];
       const dx = B.x - A.x, dy = B.y - A.y, L = Math.hypot(dx, dy) || 1, ux = dx / L, uy = dy / L, nx = -uy, ny = ux;
@@ -121,7 +155,7 @@ export async function renderRouteMap(routes, { width = 2400, height = 1650, titl
       const legDist = legRows.reduce((t, x) => t + x.dist, 0) || 1;
       let done = 0;
       const at = (f) => ({ x: A.x + dx * f, y: A.y + dy * f });
-      const bar = (p, len, w, color) => { g.beginPath(); g.moveTo(p.x - nx * len, p.y - ny * len); g.lineTo(p.x + nx * len, p.y + ny * len); halo(() => { g.beginPath(); g.moveTo(p.x - nx * len, p.y - ny * len); g.lineTo(p.x + nx * len, p.y + ny * len); }, w + 5 * s); g.strokeStyle = color; g.lineWidth = w; g.beginPath(); g.moveTo(p.x - nx * len, p.y - ny * len); g.lineTo(p.x + nx * len, p.y + ny * len); g.stroke(); };
+      const bar = (p, len, w, color) => { halo(() => { g.beginPath(); g.moveTo(p.x - nx * len, p.y - ny * len); g.lineTo(p.x + nx * len, p.y + ny * len); }, w + 5 * s); g.strokeStyle = color; g.lineWidth = w; g.beginPath(); g.moveTo(p.x - nx * len, p.y - ny * len); g.lineTo(p.x + nx * len, p.y + ny * len); g.stroke(); };
       for (const row of legRows) {
         const f0 = done / legDist, f1 = (done + row.dist) / legDist;
         if (row.gs > 0 && !row.fixedMin) {
@@ -137,25 +171,59 @@ export async function renderRouteMap(routes, { width = 2400, height = 1650, titl
         if (row.auto && (row.to === 'TOC' || row.to === 'TOD')) {
           const p = at(f1);
           bar(p, 24 * s, 7 * s, '#111');
-          label(`${row.to} ${row.to === 'TOC' ? '^' : 'v'}`, p.x + nx * 46 * s, p.y + ny * 46 * s, { size: 19 });
+          jobs2.push({ kind: 'toc', text: `${row.to} ${row.to === 'TOC' ? '^' : 'v'}`, p, nx, ny, own: [[A, B]], leg: legSegs[i - 1] });
         }
         done += row.dist;
       }
       const last = legRows[legRows.length - 1];
-      if (last && L > 120 * s) {
+      if (last) {
         const ete = legRows.reduce((t, x) => t + x.eteSec, 0);
-        const m = at(0.5), off = 52 * s;
-        hatBox(`${r.alt ? 'A' : ''}${i}`, [`${pad3(last.mh)}°`, `${last.altDisp || ''}`, mmss(ete)], m.x - nx * off, m.y - ny * off, col);
+        jobs2.push({ kind: 'hat', n: `${r.alt ? 'A' : ''}${i}`, parts: [`${pad3(last.mh)}°`, `${last.altDisp || ''}`, mmss(ete)], A, B, nx, ny, L, col, leg: legSegs[i - 1] });
       }
     }
-    // circled waypoints with names
+    // circled waypoints (names later)
     r.wps.forEach((w, i) => {
       const p = wp[i];
       g.save(); g.lineWidth = 9 * s; g.strokeStyle = 'rgba(255,255,255,0.92)'; g.beginPath(); g.arc(p.x, p.y, 20 * s, 0, Math.PI * 2); g.stroke();
       g.lineWidth = 4.5 * s; g.strokeStyle = col; g.beginPath(); g.arc(p.x, p.y, 20 * s, 0, Math.PI * 2); g.stroke(); g.restore();
+      circles.push({ x: p.x, y: p.y, r: 20 * s });
       if (r.alt && i === 0) return; // the alternate starts at the destination, already named
-      label(w.name, p.x + 30 * s + g.measureText(w.name).width / 2, p.y - 30 * s, { size: 22 });
+      jobs2.push({ kind: 'name', text: w.name, p, own: legSegs.filter((sg) => sg[0] === p || sg[1] === p) });
     });
+  }
+
+  // 1) waypoint names: around the ring, first free spot
+  const namedAt = [];
+  for (const j of jobs2.filter((x) => x.kind === 'name')) {
+    if (namedAt.some((q) => q.text === j.text && Math.hypot(q.p.x - j.p.x, q.p.y - j.p.y) < 30 * s)) continue; // a round trip ends where it started
+    namedAt.push(j);
+    const { w, h } = labelSize(j.text, 22), d = 26 * s, p = j.p;
+    const spots = [[d, -d - h], [d, d], [-d - w, -d - h], [-d - w, d], [d + 4 * s, -h / 2], [-d - w - 4 * s, -h / 2], [-w / 2, -d - h - 6 * s], [-w / 2, d + 6 * s]];
+    const pick = best(spots.map(([ox, oy], k) => ({ box: { x: p.x + ox, y: p.y + oy, w, h }, pen: k * 50 * s })), j.own);
+    placed.push(pick.box);
+    label(j.text, pick.box.x + w / 2, pick.box.y + h / 2, { size: 22 });
+  }
+  // 2) HATs: along their leg, either side, nearer or further; a thin leader line when moved off the leg
+  for (const j of jobs2.filter((x) => x.kind === 'hat')) {
+    const { W, h } = hatSize(j.n, j.parts);
+    const cands = [];
+    for (const f of [0.5, 0.38, 0.62, 0.28, 0.72, 0.18, 0.82]) for (const side of [-1, 1]) for (const off of [52, 95, 145]) {
+      const cx = j.A.x + (j.B.x - j.A.x) * f + side * j.nx * off * s, cy = j.A.y + (j.B.y - j.A.y) * f + side * j.ny * off * s;
+      cands.push({ box: { x: cx - W / 2, y: cy - h / 2, w: W, h }, cx, cy, f, pen: (Math.abs(f - 0.5) * 300 + (off - 52) * 4 + (side === 1 ? 20 : 0)) * s * s * 10 });
+    }
+    const pick = best(cands, [j.leg]);
+    placed.push(pick.box);
+    const mx = j.A.x + (j.B.x - j.A.x) * pick.f, my = j.A.y + (j.B.y - j.A.y) * pick.f;
+    if (Math.hypot(pick.cx - mx, pick.cy - my) > 70 * s) { g.save(); g.strokeStyle = j.col; g.lineWidth = 2.5 * s; g.setLineDash([6 * s, 5 * s]); g.beginPath(); g.moveTo(mx, my); g.lineTo(pick.cx, pick.cy); g.stroke(); g.restore(); }
+    hatBox(j.n, j.parts, pick.cx, pick.cy, j.col);
+  }
+  // 3) TOC / TOD labels next to their bar
+  for (const j of jobs2.filter((x) => x.kind === 'toc')) {
+    const { w, h } = labelSize(j.text, 19);
+    const cands = [46, 80, -46, -80].map((o, k) => { const cx = j.p.x + j.nx * o * s, cy = j.p.y + j.ny * o * s; return { box: { x: cx - w / 2, y: cy - h / 2, w, h }, cx, cy, pen: k * 30 * s }; });
+    const pick = best(cands, j.own);
+    placed.push(pick.box);
+    label(j.text, pick.cx, pick.cy, { size: 19 });
   }
 
   // scale bar (NM) and north
