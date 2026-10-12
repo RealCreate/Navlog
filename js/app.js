@@ -53,17 +53,25 @@ function adWaypoint(ad) {
 }
 
 // a number that could not be read (e.g. typed with a comma by an older version) is saved as null: start it empty
-const cleanNums = (o) => Object.fromEntries(Object.entries(o || {}).map(([k, v]) => [k, v === null || (typeof v === 'number' && !Number.isFinite(v)) ? '' : v]));
+function cleanNums(o) { return Object.fromEntries(Object.entries(o || {}).map(([k, v]) => [k, v === null || (typeof v === 'number' && !Number.isFinite(v)) ? '' : v])); }
 function load() {
   try {
     const s = JSON.parse(localStorage.getItem(STORE));
     if (s && s.main) { const d = defaultState(); return { ...d, ...s, flight: { ...d.flight, ...cleanNums(s.flight) }, view: { ...d.view, ...s.view, ...(s.view && s.view.chartV ? {} : { base: 'chart', chartV: 1 }), ...(s.view && s.view.namesV ? {} : { names: true, namesV: 1 }) }, mb: { ...d.mb, ...s.mb }, settings: { ...d.settings, ...s.settings }, unlocked: s.unlocked || d.unlocked, tem: s.tem || {} }; }
-  } catch { /* first run or storage blocked */ }
-  return defaultState();
+  } catch (err) {
+    // never lose saved work to a bug: keep the stored copy aside before starting fresh
+    console.error('Could not read the saved state', err);
+    try { const raw = localStorage.getItem(STORE); if (raw) localStorage.setItem(`${STORE}.backup`, raw); } catch { /* storage blocked */ }
+  }
+  // Settings (name, signature, callsigns, unlocked aerodromes) are also kept on their own
+  const d = defaultState();
+  try { const k = JSON.parse(localStorage.getItem(`${STORE}.settings`)); if (k) { d.settings = { ...d.settings, ...k.settings }; if (k.unlocked) d.unlocked = k.unlocked; } } catch { /* none */ }
+  return d;
 }
 function save() {
   if (typeof syncActiveLeg === 'function') syncActiveLeg();
   try { localStorage.setItem(STORE, JSON.stringify(state)); } catch { /* private mode */ }
+  try { localStorage.setItem(`${STORE}.settings`, JSON.stringify({ settings: state.settings, unlocked: state.unlocked })); } catch { /* private mode */ }
 }
 
 const route = (k = state.active) => state[k];
@@ -2938,6 +2946,7 @@ async function downloadBriefing(separate = false) {
         }
         if (p.withMb && p.mbArgs) files.push({ name: `${m && m.type === 'local' ? '' : pre}MB_${state.flight.reg || ''}_${d0}.pdf`, bytes: await buildMbPdf(...p.mbArgs) });
       }
+      if (!files.length) { toast('Nothing to export yet — plan the route first'); return; }
       sepFiles = files.map((f) => ({ name: f.name, blob: new Blob([f.bytes], { type: 'application/pdf' }) }));
       sepFiles.made = zl(new Date());
       update({ rerenderPanels: true });
