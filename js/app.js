@@ -1603,8 +1603,25 @@ function aemetCharts(t, altFt) {
   const wind = { label: `Wind & temperature FL${fl} · valid ${hh(valid)}Z ${valid.getUTCDate()}/${valid.getUTCMonth() + 1}`, urls };
   return { sigwx, wind };
 }
-const chartImg = (c) => c.urls.length ? `<figure class="wxchart"><img alt="${esc(c.label)}" loading="lazy" data-urls="${esc(JSON.stringify(c.urls))}" data-i="0" src="https://${c.urls[0]}" onerror="this.dataset.i=+this.dataset.i+1; const u=JSON.parse(this.dataset.urls); const i=+this.dataset.i; if (i < u.length * 2) this.src=(i % 2 ? 'http://' : 'https://') + u[Math.floor(i / 2)]; else this.closest('figure').classList.add('failed');"><figcaption>${esc(c.label)} · AEMET <a href="https://${c.urls[0]}" target="_blank" rel="noopener">open ↗</a></figcaption></figure>` : '';
+const chartImg = (c) => c.urls.length ? `<figure class="wxchart"><img alt="${esc(c.label)}" loading="lazy" data-urls="${esc(JSON.stringify(c.urls))}" data-i="0" src="https://${c.urls[0]}" onload="navlogChartLoaded(this)" onerror="this.dataset.i=+this.dataset.i+1; const u=JSON.parse(this.dataset.urls); const i=+this.dataset.i; if (i < u.length * 2) this.src=(i % 2 ? 'http://' : 'https://') + u[Math.floor(i / 2)]; else this.closest('figure').classList.add('failed');"><figcaption>${esc(c.label)} · AEMET <a href="https://${c.urls[0]}" target="_blank" rel="noopener">open ↗</a></figcaption></figure>` : '';
+// AEMET lets the browser show its chart images but may not let the app read them (no CORS header):
+// then they cannot go into the PDF, and the student is told how to add the chart by hand.
+const chartBytes = new Map();
+window.navlogChartLoaded = async (img) => {
+  const fig = img.closest('figure'); if (!fig || fig.dataset.checked) return;
+  fig.dataset.checked = '1';
+  try {
+    const r = await fetch(img.src, { mode: 'cors' });
+    if (!r.ok) throw new Error(String(r.status));
+    chartBytes.set(img.src.replace(/^https?:\/\//, ''), new Uint8Array(await r.arrayBuffer()));
+    fig.insertAdjacentHTML('beforeend', '<div class="chart-pdf ok">✓ Goes into the briefing PDF</div>');
+  } catch {
+    const kind = fig.closest('[data-wxkind]')?.dataset.wxkind;
+    fig.insertAdjacentHTML('beforeend', `<div class="chart-pdf no"><b>Shown here, but AEMET does not let the app copy it into the PDF.</b> Tap and hold the chart → <b>Save to Photos</b>, then <b>Add ${kind === 'wind' ? 'Wind chart' : 'SIGWX'}</b> below and pick it from Photos.</div>`);
+  }
+};
 async function fetchChartBytes(c) {
+  for (const u of c.urls) if (chartBytes.has(u)) return chartBytes.get(u);
   for (const u of c.urls) for (const proto of ['https://', 'http://']) {
     try { const r = await fetch(proto + u, { mode: 'cors' }); if (r.ok) return new Uint8Array(await r.arrayBuffer()); } catch { /* blocked or missing */ }
   }
@@ -1685,7 +1702,7 @@ function wxUploadHtml(kind, auto) {
     return `<figure class="wxchart"><img alt="${WXUP_NAME[kind]}" src="data:image/jpeg;base64,${u.b64}"><figcaption>${WXUP_NAME[kind]} · added ${zl(new Date(u.added))}${age > 12 ? ` · <b class="warn-text">added ${age} h before departure — check its validity</b>` : ''}</figcaption>
       <div class="row" style="gap:6px;margin-top:4px">${pick('Replace')}<button class="btn small danger" data-act="wxUpRemove" data-kind="${kind}">Remove</button></div></figure>`;
   }
-  return `<div>${chartImg(auto)}<div class="row" style="gap:6px;margin-top:4px">${pick(`Add ${WXUP_NAME[kind]}`, true)}<span class="label">image, screenshot or PDF</span></div></div>`;
+  return `<div data-wxkind="${kind}">${chartImg(auto)}<div class="row" style="gap:6px;margin-top:4px">${pick(`Add ${WXUP_NAME[kind]}`, true)}<span class="label">image, screenshot or PDF</span></div></div>`;
 }
 
 /* ---------------- ICARO NOTAM bulletin (saved PDF, added by the student) ---------------- */

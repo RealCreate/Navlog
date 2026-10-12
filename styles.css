@@ -410,6 +410,10 @@ details.options[open] > summary { border-bottom: 0.5px solid var(--sep); }
 .wxchart figcaption { font-size: 12px; color: var(--label2); margin-top: 4px; }
 .wxchart figcaption a { color: var(--tint); }
 .wxchart.failed img { display: none; }
+.chart-pdf { font-size: 12.5px; margin-top: 6px; padding: 8px 10px; border-radius: 8px; line-height: 1.35; }
+.chart-pdf.ok { color: var(--green, #1f9d55); background: rgba(52,199,89,0.12); }
+.chart-pdf.no { color: var(--label); background: rgba(255,149,0,0.16); }
+.wxchart.failed .chart-pdf { display: none; }
 .wxchart.failed figcaption::before { content: 'Not available here — '; }
 
 /* ---------- Guided steps (GUI rework, 11 Oct) ---------- */

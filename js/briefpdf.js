@@ -91,8 +91,8 @@ export function addBriefingPages(doc, F, B, meta) {
   W.heading('1 · Weather');
   const att = meta.wxAttach;
   if (att) {
-    for (const [k, name, miss] of [['A', 'Surface pressure chart', 'NOT ATTACHED — AEMET analysis not available'], ['B', 'SIGWX', 'NOT ADDED — add it in step 4 · Briefing'], ['C', 'Wind chart', 'NOT ADDED — add it in step 4 · Briefing']]) {
-      W.row(`${k} · ${name}${att[k] ? ` — ${att[k]}` : ''}`, att[k] ? 'ATTACHED' : 'MISSING', att[k] ? W.green : W.red);
+    for (const [k, name, miss] of [['A', 'Surface pressure chart', 'AEMET analysis not available'], ['B', 'SIGWX', 'not in this PDF: save the chart from AEMET and use Add SIGWX in step 4'], ['C', 'Wind chart', 'not in this PDF: save the chart from AEMET and use Add Wind chart in step 4']]) {
+      W.row(`${k} · ${name} — ${att[k] || miss}`, att[k] ? 'ATTACHED' : 'MISSING', att[k] ? W.green : W.red);
     }
   }
   W.sub('D · METAR', '');
