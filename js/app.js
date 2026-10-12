@@ -32,7 +32,7 @@ const defaultState = () => ({
   alt: { waypoints: [], stdDep: false, stdArr: false },
   active: 'main',
   time: null,
-  flight: { callsign: '', type: 'P2008', reg: 'EC-ODX', pilot: '', copilot: '', baggage: 0, baggage2: 0, pax: '', pax1: '', pax2: '', emptyMass: '', emptyMoment: '', fob: 120, taxi: '', extra: 0, weather: '', solo: false, pob: 2, lowCloud: false },
+  flight: { callsign: '', type: 'P2008', reg: 'EC-ODX', pilot: '', copilot: '', baggage: 0, baggage2: 0, pax: '', pax1: '', pax2: '', emptyMass: '', emptyMoment: '', fob: 120, taxi: '', extra: 0, weather: '', solo: false, pob: 2, lowCloud: false, levelMode: 'fl' },
   view: { base: 'chart', chartV: 1, namesV: 1, points: true, marks: true, names: true, profile: true, winds: true, panel: true },
   unlocked: ['LEBG', 'LERJ'],
   tem: {},
@@ -770,9 +770,10 @@ function compute() {
   if (!f.fobSet && !(state.mission && f.carried) && (!dep0 || BASES.includes(dep0.icao))) f.fob = acOf(f.type).fuelMaxL;
   const ta = endpoint('main', 0)?.ta || 6000;
   const sop = planSop();
-  const main = computeNavlog({ ...state.main, fob: +f.fob || 0, ta }, sop);
+  const altOnly = f.levelMode === 'alt';
+  const main = computeNavlog({ ...state.main, fob: +f.fob || 0, ta, altOnly }, sop);
   const lastRem = main.rows.length ? main.rows[main.rows.length - 1].fuelRem : +f.fob || 0;
-  const alt = computeNavlog({ ...state.alt, fob: lastRem, ta }, sop);
+  const alt = computeNavlog({ ...state.alt, fob: lastRem, ta, altOnly }, sop);
   const dep = endpoint('main', 0), dest = endpoint('main', -1);
   const local = !!dep && !!dest && dep.icao === dest.icao;
   const fuel = fuelPolicy({
@@ -942,6 +943,10 @@ function renderRoute() {
   if (windChanges.length) html += `<div class="warnings" style="color:var(--tint);background:rgba(10,132,255,0.1)"><b>Winds updated — changes:</b><br>${windChanges.map(esc).join('<br>')}<br>Download the navlog again to reprint.</div>`;
   if (nl.warnings.length) html += `<div class="warnings">${nl.warnings.map(esc).join('<br>')}</div>`;
 
+  const lm = state.flight.levelMode === 'alt' ? 'alt' : 'fl';
+  const taFt = endpoint('main', 0)?.ta || 6000;
+  html += `<div class="group levelmode"><div class="row"><span class="grow"><b>Levels on the navlog</b><br><span class="label">${lm === 'fl' ? `Flight levels above the transition altitude (${taFt} ft), altitudes below` : 'Altitudes on QNH everywhere (e.g. 6500 instead of FL065)'}</span></span>
+    <div class="segmented small"><button data-levelmode="fl" class="${lm === 'fl' ? 'on' : ''}">FL</button><button data-levelmode="alt" class="${lm === 'alt' ? 'on' : ''}">ALT</button></div></div></div>`;
   const optSummary = [r.stdDep && 'std dep', r.stdArr && 'std arr', state.flight.solo && 'solo', state.flight.lowCloud && 'low cloud'].filter(Boolean).join(' · ') || 'none';
   html += `<details class="group options" ${state.view.optsOpen ? 'open' : ''}><summary><span>Flight options</span><span class="label">${optSummary}</span></summary>
     <div class="toggle-row"><span>Standard departure — ${SOP.stdDepMin} min <small class="label">(only when starting at an aerodrome)</small></span>
@@ -1047,6 +1052,8 @@ panels.route.addEventListener('change', (e) => {
 });
 panels.route.addEventListener('toggle', (e) => { if (e.target.matches('details.options')) { state.view.optsOpen = e.target.open; scheduleSave(); } }, true);
 panels.route.addEventListener('click', (e) => {
+  const lmb = e.target.closest('[data-levelmode]');
+  if (lmb) { state.flight.levelMode = lmb.dataset.levelmode; toast(lmb.dataset.levelmode === 'alt' ? 'Navlog shows altitudes (QNH)' : 'Navlog shows flight levels above the transition altitude'); return update({ rerenderPanels: true }); }
   if (e.target.closest('[data-act=toMission]')) return document.querySelector('#modes [data-mode=mission]').click();
   const b = e.target.closest('[data-act]'); if (!b) return;
   const r = route();
@@ -1479,6 +1486,11 @@ function planIssues() {
     if (f.solo && !state.unlocked.includes(ad.icao)) issues.push({ level: 'bad', text: `Solo: ${role.toLowerCase()} ${ad.icao} is not one of your unlocked aerodromes` });
   }
   if (!alt) issues.push({ level: 'warn', text: 'No alternate planned — each leg needs an alternate (school policy)' });
+  if (f.levelMode === 'alt') {
+    const ta = dep?.ta || 6000;
+    const hi = Math.max(0, ...['main', 'alt'].flatMap((k) => result[k].rows.map((r) => +r.alt || 0)));
+    if (hi > ta) issues.push({ level: 'info', text: `Altitudes chosen instead of flight levels: ${hi} ft is above the transition altitude (${ta} ft), where levels are normally flown on 1013 — confirm with your instructor` });
+  }
   // aerodrome hours
   for (const [ad, t, role] of [[dep, to, 'departure'], [dest, ldg, 'arrival'], [alt, altArr, 'alternate arrival']]) {
     if (!ad) continue;

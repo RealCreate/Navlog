@@ -74,7 +74,8 @@ export function fmtAlt(ft, label) {
 }
 
 /** Altitude or flight level: above the transition altitude, levels are given as FL (QNH 1013). */
-export function fmtLevel(ft, label, ta = 6000) {
+export function fmtLevel(ft, label, ta = 6000, altOnly = false) {
+  if (altOnly) return ft == null || ft === '' ? '' : String(ft); // the student chose altitudes (QNH) throughout
   if (label && /^FL/i.test(label)) return String(label).toUpperCase().replace(/\s+/g, '');
   if (ft == null || ft === '') return '';
   if (ft > ta) return `FL${String(Math.round(ft / 100)).padStart(3, '0')}`;
@@ -217,7 +218,7 @@ export function computeNavlog(plan, s = SOP) {
   // Altitude as printed: flight levels above the transition altitude (QNH 1013), plus climb/descent marker.
   const ta = +plan.ta || 6000;
   rows.forEach((r) => {
-    r.altDisp = fmtLevel(r.alt, r.altLabel, ta);
+    r.altDisp = fmtLevel(r.alt, r.altLabel, ta, !!plan.altOnly);
     r.vs = r.phase === 'climb' ? 'up' : r.phase === 'descent' ? 'down' : null;
   });
 
