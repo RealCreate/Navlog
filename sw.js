@@ -1,6 +1,6 @@
 // Offline support: app shell is precached; chart tiles are cached as they are viewed
 // (or saved in bulk with "Save chart for offline").
-const VERSION = 'navlog-shell-v44';
+const VERSION = 'navlog-shell-v45';
 const TERRAIN = 'navlog-terrain-v1';
 const TILES = 'navlog-tiles-v1';
 const OWNCHART = 'navlog-ownchart-v1';
@@ -13,7 +13,7 @@ const SHELL = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
@@ -51,7 +51,7 @@ self.addEventListener('fetch', (e) => {
   }
   if (url.origin === location.origin) {
     // App files: network first so updates arrive, cache as fallback for offline
-    e.respondWith(fetch(e.request).then((res) => {
+    e.respondWith(fetch(e.request, { cache: 'no-cache' }).then((res) => {
       if (res.ok) caches.open(VERSION).then((c) => c.put(e.request, res.clone()));
       return res;
     }).catch(() => caches.match(e.request, { ignoreSearch: true }).then((r) => r || caches.match('index.html'))));
