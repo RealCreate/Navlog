@@ -776,6 +776,33 @@ function drawRoutes() {
   placeHats();
 }
 
+/* Leg card: tap a HAT box on the map for that leg's numbers */
+function openLegCard(key, i, latlng) {
+  const wps = state[key].waypoints, w = wps[i], a = wps[i - 1];
+  const rows = result[key].rows.filter((x) => x.legIndex === i);
+  if (!w || !a || !rows.length) return;
+  const last = rows[rows.length - 1];
+  const ete = rows.reduce((t, x) => t + x.eteSec, 0), fuel = Math.round(rows.reduce((t, x) => t + x.fuel, 0) * 10) / 10, dist = rows.reduce((t, x) => t + x.dist, 0);
+  const lm = legMinimum(key, i);
+  const low = lm && !isProcPoint(wps, i) && parseAlt(w.alt) != null && parseAlt(w.alt) < lm.need;
+  const cell = (k, v) => `<div><span>${k}</span><b>${v}</b></div>`;
+  const html = `<div class="leg-card-pop ${key === 'alt' ? 'alt' : ''}">
+    <div class="lc-title"><span class="lc-n">${key === 'alt' ? 'A' : ''}${i}</span>${esc(a.name)} → ${esc(w.name)}</div>
+    <div class="lc-grid">${cell('MH', `${String(last.mh).padStart(3, '0')}°`)}${cell('Alt', esc(last.altDisp || w.alt || ''))}${cell('ETE', fmtMMSS(ete))}
+      ${cell('TC', `${last.tc}°`)}${cell('Dist', `${dist} NM`)}${cell('GS', `${last.gs} kt`)}
+      ${cell('Wind', +w.wspd ? `${String(w.wdir).padStart(3, '0')}/${w.wspd}` : '—')}${cell('Fuel', `${fuel} L`)}${cell('Min', lm ? `<span class="${low ? 'bad-t' : ''}">${lm.need} ft</span>` : '—')}</div>
+    ${rows.length > 1 ? `<div class="lc-note">includes ${esc(rows.find((x) => x.auto)?.to || '')}</div>` : ''}
+    ${low ? `<div class="lc-note bad-t">Below the minimum: ${esc(lm.why)}</div>` : ''}
+    <button class="btn small primary" data-legedit="${key}:${w.id}">Edit this leg</button></div>`;
+  L.popup({ closeButton: true, autoPan: true, className: 'leg-popup', maxWidth: 300 }).setLatLng(latlng).setContent(html).openOn(map);
+}
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-legedit]'); if (!b) return;
+  const [key, id] = b.dataset.legedit.split(':');
+  map.closePopup();
+  goIssue({ route: key, wid: +id });
+});
+
 function lerp(a, b, f) { return [a.lat + (b.lat - a.lat) * f, a.lon + (b.lon - a.lon) * f]; }
 
 // A short line across the route at position pos (pixels each side), as drawn on a paper chart.
@@ -832,10 +859,12 @@ function drawLegAnnotations(key, rows, wps, isAlt) {
     const pxLen = map.latLngToLayerPoint([a.lat, a.lon]).distanceTo(map.latLngToLayerPoint([b.lat, b.lon]));
     if (pxLen < 70) continue; // too short at this zoom: zoom in to see its HAT
     const ete = legRows.reduce((t, r) => t + r.eteSec, 0);
-    hatJobs.push({ a, b, marker: L.marker(lerp(a, b, 0.5), {
-      pane: 'marks', interactive: false,
+    const hatMk = L.marker(lerp(a, b, 0.5), {
+      pane: 'marks', interactive: true, keyboard: false,
       icon: L.divIcon({ className: '', iconSize: [0, 0], html: `<span class="hat ${isAlt ? 'alt' : ''}"><b class="hn">${isAlt ? 'A' : ''}${i}</b><span class="hv">${String(last.mh).padStart(3, '0')}°</span><span class="hv">${last.altDisp || fmtAlt(last.alt, last.altLabel)}</span><span class="hv">${fmtMMSS(ete)}</span></span>` }),
-    }).addTo(routeLayer) });
+    }).addTo(routeLayer);
+    hatMk.on('click', (e) => { L.DomEvent.stopPropagation(e); openLegCard(key, i, e.latlng); });
+    hatJobs.push({ a, b, marker: hatMk });
   }
 }
 
@@ -1070,7 +1099,7 @@ function seraIssues(key) {
     const to = r.waypoints[row.legIndex];
     if (to && isProcPoint(r.waypoints, row.legIndex)) return; // procedure altitude (VAC / SOP)
     const h = semicircularHint(row.mc, row.alt);
-    if (h) out.push({ level: 'warn', text: `${row.from} → ${row.to}: ${h}` });
+    if (h) out.push({ level: 'warn', text: `${row.from} → ${row.to}: ${h}`, go: { route: key, wid: to && to.id } });
   });
   return out;
 }
@@ -1121,10 +1150,10 @@ function renderRoute() {
   const soloIssue = soloEntryIssue();
   if (soloIssue) html = `<div class="warnings">${esc(soloIssue)}</div>` + html;
   const semi = seraIssues(key);
-  if (semi.length) html = `<div class="warnings">${semi.map((x) => esc(x.text)).join('<br>')}</div>` + html;
+  if (semi.length) html = `<ul class="issues tappable">${semi.map((x) => `<li class="warn" data-go="${esc(JSON.stringify(issueTarget(x)))}"><span class="ic">!</span><span>${esc(x.text)}</span><span class="go">›</span></li>`).join('')}</ul>` + html;
 
   html += `<div class="group-title"><span>${isAlt ? 'Alternate route' : 'Route'} · ${wps.length} point${wps.length === 1 ? '' : 's'}</span>
-    <span><button class="btn small" data-act="windall">Wind for all legs</button> <button class="btn small" data-act="reverse">Reverse</button> <button class="btn small danger" data-act="clear">Clear</button></span></div>`;
+    <span><button class="btn small" data-act="compact" title="One line per point, or every point open">${state.view.compact === false ? 'Compact' : 'Expand all'}</button> <button class="btn small" data-act="windall">Wind for all legs</button> <button class="btn small" data-act="reverse">Reverse</button> <button class="btn small danger" data-act="clear">Clear</button></span></div>`;
 
   const sugg = isAlt ? companyAlternate() : null;
   if (sugg && (wps.length <= 1)) {
@@ -1135,10 +1164,27 @@ function renderRoute() {
   } else {
     html += `<div class="group ${isAlt ? 'alt-mode' : ''}">`;
     const stdOn = stdFlags(r);
+    const compact = state.view.compact !== false;
     wps.forEach((w, i) => {
       const legRows = nl.rows.filter((x) => x.legIndex === i);
       const sub = w.ref ? (POINTS.find((p) => p.key === w.ref)?.sub || '') : `${w.lat.toFixed(4)}, ${w.lon.toFixed(4)}`;
-      html += `<div class="wp" data-id="${w.id}">
+      if (compact && w.id !== selectedId) {
+        // one line: number · name · altitude · MH · leg time · fuel (+ a warning sign when something needs a look)
+        let line = '', flag = '';
+        if (i > 0 && legRows.length) {
+          const last = legRows[legRows.length - 1];
+          const ete = legRows.reduce((t, x) => t + x.eteSec, 0), fuel = Math.round(legRows.reduce((t, x) => t + x.fuel, 0) * 10) / 10;
+          const lm = legMinimum(key, i);
+          const low = lm && !isProcPoint(wps, i) && parseAlt(w.alt) != null && parseAlt(w.alt) < lm.need;
+          const sera = !isProcPoint(wps, i) && !(i === 1 && stdOn.dep) && !(i === wps.length - 1 && stdOn.arr) ? semicircularHint(last.mc, parseAlt(w.alt)) : null;
+          const long = nmDist(wps[i - 1], w) > MAX_LEG_NM + 0.05 && !isProcPoint(wps, i);
+          if (low || sera || long) flag = `<span class="wp-flag" title="${esc([low && 'below the minimum altitude', sera && 'cruising level', long && `leg over ${MAX_LEG_NM} NM`].filter(Boolean).join(' · '))}">!</span>`;
+          line = `<span><b>${esc(last.altDisp || w.alt || '')}</b></span><span>${String(last.mh).padStart(3, '0')}°</span><span>${fmtMMSS(ete)}</span><span>${fuel} L</span>${w.proc ? '<span class="tag">VAC</span>' : ''}`;
+        } else if (i === 0) line = `<span class="label">${esc(sub)}</span>`;
+        html += `<div class="wp compact" data-id="${w.id}" data-expand="${w.id}"><div class="wp-n">${i + 1}</div><div class="wp-cname">${esc(w.name)}</div><div class="wp-line">${line}</div>${flag}<span class="go">›</span></div>`;
+        return;
+      }
+      html += `<div class="wp ${compact ? 'open' : ''}" data-id="${w.id}">
         <div class="wp-n">${i + 1}</div>
         <input class="wp-name" data-f="name" value="${esc(w.name)}" aria-label="Waypoint name">
         <div class="wp-actions">
@@ -1213,6 +1259,9 @@ panels.route.addEventListener('change', (e) => {
 });
 panels.route.addEventListener('toggle', (e) => { if (e.target.matches('details.lib')) { state.view.libOpen = e.target.open; scheduleSave(); } else if (e.target.matches('details.options')) { state.view.optsOpen = e.target.open; scheduleSave(); } }, true);
 panels.route.addEventListener('click', (e) => {
+  const ex = e.target.closest('[data-expand]');
+  if (ex) { selectWaypoint(+ex.dataset.expand, false); renderRoute(); const el = panels.route.querySelector(`.wp[data-id="${ex.dataset.expand}"]`); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); return; }
+  if (e.target.closest('[data-act=compact]')) { state.view.compact = state.view.compact === false; scheduleSave(); return renderRoute(); }
   if (e.target.closest('[data-act=libBuild]')) { const f = state.view.libFrom || 'LEBG'; return buildLibraryRoute(f, state.view.libTo || (f === 'LEBG' ? 'LERJ' : 'LEBG')); }
   if (e.target.closest('[data-act=libSwap]')) { const f = state.view.libFrom || 'LEBG', t = state.view.libTo || (f === 'LEBG' ? 'LERJ' : 'LEBG'); state.view.libFrom = t; state.view.libTo = f; scheduleSave(); return renderPanels(); }
   const lmb = e.target.closest('[data-levelmode]');
@@ -1250,8 +1299,10 @@ panels.route.addEventListener('focusin', (e) => {
 });
 
 function selectWaypoint(id, scroll) {
+  const changed = selectedId !== id;
   selectedId = id;
   drawRoutes();
+  if (changed && scroll && state.view.compact !== false && tab === 'route' && state.mode === 'plan') renderRoute();
   if (scroll) {
     if (state.mode !== 'plan') { state.mode = 'plan'; showPanels(); }
     if (tab !== 'route') document.querySelector('#tabs [data-tab=route]').click();
@@ -1764,6 +1815,7 @@ document.getElementById('btnMbPdf').addEventListener('click', downloadMbPdf);
 
 function renderPanels() {
   renderSheetView();
+  { const sh = document.getElementById('sheet'); sh.dataset.tab = tab; sh.dataset.route = state.active; }
   document.querySelectorAll('#routeSel button').forEach((b) => b.classList.toggle('on', b.dataset.route === state.active));
   document.getElementById('routeSel').hidden = tab === 'fuel';
   if (state.mode === 'mb') return renderMB();
@@ -1829,9 +1881,9 @@ function planIssues() {
       if (d <= MAX_LEG_NM + 0.05) continue;
       const adOf = (x) => (x.ref && (POINTS.find((q) => q.key === x.ref) || {}).ad) || null;
       const published = (w[i].proc || w[i - 1].proc) && adOf(w[i]) && adOf(w[i]) === adOf(w[i - 1]);
-      issues.push(published
+      issues.push({ ...(published
         ? { level: 'info', text: `${w[i - 1].name} → ${w[i].name} is ${d.toFixed(1)} NM, longer than the school's ${MAX_LEG_NM} NM, but it is part of the published ${adOf(w[i])} procedure` }
-        : { level: 'warn', text: `${k === 'alt' ? 'Alternate leg' : 'Leg'} ${w[i - 1].name} → ${w[i].name} is ${d.toFixed(1)} NM — school limit ${MAX_LEG_NM} NM per leg: add a turning point` });
+        : { level: 'warn', text: `${k === 'alt' ? 'Alternate leg' : 'Leg'} ${w[i - 1].name} → ${w[i].name} is ${d.toFixed(1)} NM — school limit ${MAX_LEG_NM} NM per leg: add a turning point` }), go: { route: k, wid: w[i].id } });
     }
   }
   if (f.levelMode === 'alt') {
@@ -1874,15 +1926,16 @@ function planIssues() {
       if (alt == null || /^FL/i.test(String(w.alt))) continue;
       const lm = legMinimum(key, i);
       const procLeg = isProcPoint(wps, i); // VAC / SOP altitude: flown as published, the check is only a note
-      if (lm && alt < lm.need) issues.push({ level: procLeg ? 'info' : 'warn', text: `${key === 'alt' ? 'Alternate ' : ''}${wps[i - 1].name} → ${w.name}: ${alt} ft is below ${procLeg ? '1000 ft above the highest obstacle' : `the minimum ${lm.need} ft`} — ${lm.why}${procLeg ? ' (published VAC/SOP altitude — keep the obstacle in sight)' : `; SOP 1000 ft above the highest obstacle${lm.mountain ? ' (2000 ft over mountains)' : ''}`}` });
+      if (lm && alt < lm.need) issues.push({ go: { route: key, wid: w.id }, level: procLeg ? 'info' : 'warn', text: `${key === 'alt' ? 'Alternate ' : ''}${wps[i - 1].name} → ${w.name}: ${alt} ft is below ${procLeg ? '1000 ft above the highest obstacle' : `the minimum ${lm.need} ft`} — ${lm.why}${procLeg ? ' (published VAC/SOP altitude — keep the obstacle in sight)' : `; SOP 1000 ft above the highest obstacle${lm.mountain ? ' (2000 ft over mountains)' : ''}`}` });
     }
   }
   // airspace along the route
   for (const key of ['main', 'alt']) {
     const ends = [endpoint(key, 0), endpoint(key, -1)].filter(Boolean);
-    airspaceCrossings(routeLegs(key), AIRSPACES)
+    const legs = routeLegs(key);
+    airspaceCrossings(legs, AIRSPACES)
       .filter((c) => !(['FIZ', 'CTR', 'ATZ', 'RMZ', 'TMZ'].includes(c.sp.type) && ends.some((ad) => c.leg.includes(ad.icao))))
-      .forEach((c) => issues.push(crossingIssue(c)));
+      .forEach((c) => issues.push({ ...crossingIssue(c), go: { route: key, wid: legs.find((l) => l.name === c.leg)?.b.id } }));
   }
   return dedupe(issues);
 }
@@ -2156,6 +2209,7 @@ function renderBriefing() {
     : 'In ICARO (works from Spain) save the aerodromes bulletin as PDF, then add it here: the app picks out the NOTAMs that matter for your flight and puts the identifier on the M&amp;B sheet and the briefing.'}</span></span>
     <label class="btn ${bulletin ? '' : 'primary'}">${bulletin ? 'Replace' : 'Add bulletin'}<input type="file" accept="application/pdf,.pdf" data-act="bulFile" hidden></label></div>
     <div class="row"><a class="btn small" href="https://notampib.enaire.es/icaro" target="_blank" rel="noopener">Open ICARO ↗</a><span class="grow"></span>${bulletin ? '<button class="btn small danger" data-act="bulRemove">Remove</button>' : ''}</div></div>`;
+  html += readyChecklist(B);
   html += `<button class="btn primary wide" data-act="briefPdf">Download briefing (PDF)${state.mission ? ' · whole mission' : ''}</button>`;
   html += `<button class="btn wide" data-act="sepPdf" style="margin-top:8px">Separate files · ${state.mission ? 'navlogs, alternates and M&amp;B' : 'navlog, alternate and M&amp;B'}</button>`;
   if (sepFiles && sepFiles.length) {
@@ -2164,11 +2218,11 @@ function renderBriefing() {
   }
   html += `<div class="group-title"><span>Go / no-go · ${bad ? `<span class="badge bad">${bad} no-go</span>` : '<span class="badge ok">no blockers</span>'} ${warn ? `<span class="badge warn">${warn} to check</span>` : ''}</span></div>`;
   html += issues.length
-    ? `<ul class="issues">${issues.map((i) => `<li class="${i.level}"><span class="ic">${i.level === 'bad' ? '✕' : i.level === 'warn' ? '!' : 'i'}</span><span>${esc(i.text)}</span></li>`).join('')}</ul>`
+    ? `<ul class="issues tappable">${issues.map((i) => `<li class="${i.level}" data-go="${esc(JSON.stringify(issueTarget(i)))}"><span class="ic">${i.level === 'bad' ? '✕' : i.level === 'warn' ? '!' : 'i'}</span><span>${esc(i.text)}</span><span class="go">›</span></li>`).join('')}</ul>`
     : `<div class="group"><div class="empty">${result.main.rows.length ? 'No issues found. The final decision stays with you and your instructor.' : 'Plan a route to see the checks.'}</div></div>`;
 
   // 1. Weather
-  html += `<div class="group-title"><span>1 · Weather</span><button class="btn small" data-act="wx">Refresh</button></div><div class="group">`;
+  html += `<div class="group-title" id="bs-1"><span>1 · Weather</span><button class="btn small" data-act="wx">Refresh</button></div><div class="group">`;
   const cruise = parseAlt(result.main.rows.find((r) => r.phase === 'cruise')?.alt) || 5500;
   const ch = aemetCharts(flightTime(), cruise);
   // Briefing List order: A surface pressure chart, B SIGWX, C wind chart, D METAR, E TAF
@@ -2188,7 +2242,7 @@ function renderBriefing() {
   html += `</div><p class="note">${esc(B.limits)} Sources: aviationweather.gov, AEMET (charts load from Spain only; check the validity printed on each chart).</p>`;
 
   // 2. NOTAMs
-  html += `<div class="group-title"><span>2 · NOTAMs</span></div><div class="group">
+  html += `<div class="group-title" id="bs-2"><span>2 · NOTAMs</span></div><div class="group">
     <div class="row"><span class="grow">Aerodromes: ${notamAds.join(', ') || '—'} — check every alternate individually</span><a class="btn small" href="https://notampib.enaire.es/icaro" target="_blank" rel="noopener">ICARO ↗</a></div>
     <div class="row"><span class="grow">En-route NOTAMs (Phase 3 manual)</span><a class="btn small" href="https://insigniavfr.enaire.es" target="_blank" rel="noopener">Insignia VFR ↗</a></div>
     ${bulletin ? '' : '<div class="row"><span class="grow label">No bulletin yet — add it at the top of this step.</span></div>'}
@@ -2197,11 +2251,11 @@ function renderBriefing() {
   </div>`;
 
   // 3. ATC flight plan
-  html += `<div class="group-title"><span>3 · ATC flight plan (draft)</span></div><div class="group">${fpl ? `<div class="wx mono" id="fplText">${esc(fpl)}</div>${copyBtn('fplText')}` : '<div class="empty">Plan a route between two aerodromes.</div>'}</div>
+  html += `<div class="group-title" id="bs-3"><span>3 · ATC flight plan (draft)</span></div><div class="group">${fpl ? `<div class="wx mono" id="fplText">${esc(fpl)}</div>${copyBtn('fplText')}` : '<div class="empty">Plan a route between two aerodromes.</div>'}</div>
     <p class="note">EOBT is set 10 min before takeoff. Check equipment, endurance and persons on board before filing.</p>`;
 
   // 4. Mission: departure / arrival briefing, alternate, charts
-  html += `<div class="group-title"><span>4 · Mission objective</span></div><div class="group">
+  html += `<div class="group-title" id="bs-4"><span>4 · Mission objective</span></div><div class="group">
     <div class="wx"><div class="wx-head"><b>Departure briefing</b></div><div id="depBrief">${esc(depText) || '—'}</div></div>${depText ? copyBtn('depBrief') : ''}
     <div class="wx"><div class="wx-head"><b>Arrival briefing</b><span class="label">Phase 1 format</span></div><div id="arrBrief">${esc(arrText) || '—'}</div></div>${arrText ? copyBtn('arrBrief') : ''}
     <div class="wx"><div class="wx-head"><b>Aerodromes (AIP AD 2)</b></div>${chartAds.map((x) => { const a = AIP_NOTES[x.icao]; const h = aerodromeOpen(x.icao, B.to); return `<div><b>${x.icao}</b> · fuel: ${a ? esc(a.fuel || 'no AVGAS') : 'check AD 2.4'} · ${esc(h.text)} · <a href="${x.ad2}" target="_blank" rel="noopener">AD 2 ↗</a></div>`; }).join('') || '—'}</div>
@@ -2217,11 +2271,86 @@ function renderBriefing() {
   </div>`;
 
   // 7. TEM
-  html += `<div class="group-title"><span>7 · Threat &amp; error management</span></div><div class="group">${threats.map((t) => `<label class="tem-row"><input type="checkbox" data-tem="${esc(t)}" ${state.tem[t] ? 'checked' : ''}><span>${esc(t)}</span></label>`).join('')}</div>`;
+  html += `<div class="group-title" id="bs-7"><span>7 · Threat &amp; error management</span></div><div class="group">${threats.map((t) => `<label class="tem-row"><input type="checkbox" data-tem="${esc(t)}" ${state.tem[t] ? 'checked' : ''}><span>${esc(t)}</span></label>`).join('')}</div>`;
 
   html += `<p class="note">Briefing order (school briefing list): weather, NOTAMs, ATC flight plan, mission objective, mass &amp; balance, performance, TEM. Your unlocked aerodromes are in Settings (⚙︎).</p>`;
   panels.brief.innerHTML = html;
 }
+
+/* ---------------- Ready to present: the Briefing List (SOP) item by item ---------------- */
+function readyChecklist(B) {
+  const cruise = parseAlt(result.main.rows.find((r) => r.phase === 'cruise')?.alt) || 5500;
+  const ch = aemetCharts(flightTime(), cruise);
+  const chartOk = (kind) => wxUploads[kind] ? ['ok', 'your chart added'] : ch[kind].urls.some((u) => chartBytes.has(u)) ? ['ok', 'AEMET, for your time'] : ['warn', `not in the PDF yet — save it from AEMET and tap “Add ${WXUP_NAME[kind]}”`];
+  const wx = B.wx || [];
+  const noMetar = wx.filter((w) => !w.w.metar).map((w) => w.ad.icao), noTaf = wx.filter((w) => !w.w.taf).map((w) => w.ad.icao);
+  const planBad = B.issues.filter((i) => i.level === 'bad').length;
+  const temAll = B.threats.length, temDone = B.threats.filter((t) => state.tem[t]).length;
+  const perfOk = B.perf.length && B.perf.every(({ r }) => r && !r.manual);
+  state.ready = state.ready || {};
+  const items = [
+    ['1A', 'Surface pressure chart', surface && surface.png ? ['ok', surface.label.replace(/^Surface pressure analysis · /, '')] : aemetExpired() ? ['warn', 'AEMET key expired'] : ['info', 'loading from AEMET…'], { sec: 'bs-1' }],
+    ['1B', 'SIGWX', chartOk('sigwx'), { sec: 'bs-1' }],
+    ['1C', 'Wind chart', chartOk('wind'), { sec: 'bs-1' }],
+    ['1D', 'METAR', !wx.length ? ['warn', 'plan the route first'] : wxState.err && !wxState.data ? ['warn', 'weather unavailable — check ICARO'] : wxState.data ? (noMetar.length ? ['warn', `none for ${noMetar.join(', ')} — check ICARO`] : ['ok', wx.map((w) => w.ad.icao).join(', ')]) : ['info', 'loading…'], { sec: 'bs-1' }],
+    ['1E', 'TAF', !wx.length ? ['warn', 'plan the route first'] : wxState.err && !wxState.data ? ['warn', 'weather unavailable — check ICARO'] : wxState.data ? (noTaf.length ? ['info', `not issued for ${noTaf.join(', ')}`] : ['ok', wx.map((w) => w.ad.icao).join(', ')]) : ['info', 'loading…'], { sec: 'bs-1' }],
+    ['2', 'NOTAMs', bulletin ? ['ok', `ICARO ${bulletin.parsed.id || 'bulletin'}`] : ['warn', 'add the ICARO bulletin (top of this step)'], { sec: 'bs-2' }],
+    ['3', 'ATC flight plan', B.fpl ? ['ok', 'draft ready to copy'] : ['warn', 'plan a route between two aerodromes'], { sec: 'bs-3' }],
+    ['4A', 'OFP (navlog)', !result.main.rows.length ? ['warn', 'no route yet'] : planBad ? ['warn', `${planBad} no-go item${planBad > 1 ? 's' : ''} — see Go / no-go below`] : ['ok', `${result.main.totals.dist} NM · ${fmtHMS(result.main.totals.timeSec)}`], { step: 'plan' }],
+    ['4B', 'Map', result.main.rows.length ? ['ok', 'marked chart in the PDF'] : ['warn', 'no route yet'], { step: 'plan' }],
+    ['4C', 'Alternate', result.alt.rows.length ? ['ok', `${endpoint('alt', -1)?.icao || ''} · ${result.alt.totals.dist} NM`] : ['warn', 'plan the alternate (Plan → Alternate)'], { route: 'alt' }],
+    ['4D', 'Manoeuvres', state.ready.manoeuvres ? ['ok', 'prepared'] : ['manual', 'tap when you have prepared them'], { tick: 'manoeuvres' }],
+    ['5', 'Mass & balance', result.mb && result.mb.ok && +stationMass(state.flight, 'pilot') > 0 ? ['ok', 'within limits'] : result.mb && !result.mb.ok ? ['warn', 'out of limits'] : ['warn', 'enter the masses'], { step: 'mb' }],
+    ['6', 'Performance', perfOk ? ['ok', 'take-off and landing'] : B.perf.length ? ['info', 'read the chart for this type'] : ['warn', 'plan a route first'], { step: 'mb' }],
+    ['7', 'TEM', !temAll ? ['info', 'nothing found for this flight'] : temDone === temAll ? ['ok', 'all threats reviewed'] : ['warn', `${temDone} of ${temAll} reviewed — tick them below`], { sec: 'bs-7' }],
+  ];
+  const done = items.filter((x) => x[2][0] === 'ok').length;
+  const ic = { ok: '✓', warn: '!', info: 'i', manual: '○' };
+  return `<div class="group-title"><span>Ready to present · Briefing List</span><span class="label">${done} / ${items.length}</span></div>
+  <div class="group ready"><ul class="issues ready-list">${items.map(([n, name, [st, txt], go]) => `<li class="${st === 'manual' ? 'info' : st}" data-ready="${esc(JSON.stringify(go))}"><span class="ic">${ic[st]}</span><span><b>${n} · ${esc(name)}</b> — ${esc(txt)}</span><span class="go">›</span></li>`).join('')}</ul></div>`;
+}
+document.addEventListener('click', (e) => {
+  const li = e.target.closest('ul.ready-list li[data-ready]'); if (!li) return;
+  let g; try { g = JSON.parse(li.dataset.ready); } catch { return; }
+  if (g.tick) { state.ready = state.ready || {}; state.ready[g.tick] = !state.ready[g.tick]; scheduleSave(); return renderBriefing(); }
+  if (g.sec) { const el = document.getElementById(g.sec); if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); } return; }
+  if (g.route) return goIssue({ route: g.route });
+  if (g.step) return goStep(g.step);
+});
+
+/* ---------------- Tappable warnings: each one takes you to what it is about ---------------- */
+function issueTarget(i) {
+  if (i.go && i.go.wid) return i.go;
+  const t = i.text || '';
+  if (/alternate planned|two alternates/i.test(t)) return { route: 'alt' };
+  if (/^NOTAM|bulletin/i.test(t)) return { mode: 'brief', focus: 'bulletin' };
+  if (/mass ?& ?balance|C\.G\.|\bCG\b|overweight|MTOW/i.test(t)) return { mode: 'mb' };
+  if (/fuel|tanks|FOB/i.test(t)) return { tab: 'fuel' };
+  if (/METAR|TAF|visibility|ceiling|crosswind|headwind|gust|weather/i.test(t)) return { mode: 'brief', focus: 'wx' };
+  if (/sunset|sunrise|closed at your|night VFR/i.test(t)) return { time: true };
+  if (/unlocked/i.test(t)) return { mode: 'settings' };
+  if (/Solo/i.test(t)) return { route: 'main' };
+  return { route: 'main' };
+}
+function goIssue(g) {
+  if (!g) return;
+  if (g.mode) { goStep(g.mode); return; }
+  if (g.time) { const el = document.querySelector('.timecard, #timeCard'); if (el) { el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); } toast('Change the take-off time with the slider at the top'); return; }
+  goStep('plan');
+  if (g.tab) { document.querySelector(`#tabs [data-tab=${g.tab}]`)?.click(); return; }
+  if (g.route && g.route !== state.active) { state.active = g.route; update({ rerenderPanels: true }); }
+  if (tab !== 'route') document.querySelector('#tabs [data-tab=route]')?.click();
+  if (g.wid) {
+    const r = state[g.route || state.active], i = r.waypoints.findIndex((w) => w.id === g.wid);
+    if (i > 0) map.fitBounds(L.latLngBounds([[r.waypoints[i - 1].lat, r.waypoints[i - 1].lon], [r.waypoints[i].lat, r.waypoints[i].lon]]), { padding: [80, 80], maxZoom: 11, paddingTopLeft: [isWide() ? document.getElementById('sheet').getBoundingClientRect().right + 30 : 40, 120] });
+    selectWaypoint(g.wid, true);
+    setTimeout(() => { const el = panels.route.querySelector(`.wp[data-id="${g.wid}"]`); if (el) { el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); } }, 350);
+  }
+}
+document.addEventListener('click', (e) => {
+  const li = e.target.closest('ul.issues.tappable li[data-go]'); if (!li) return;
+  try { goIssue(JSON.parse(li.dataset.go)); } catch { /* ignore */ }
+});
 
 /* ---------------- Ready offline? ----------------
  * What the app needs without signal: its own files, the AIP / obstacle / town data, and the chart
@@ -2465,12 +2594,14 @@ document.getElementById('plansList').addEventListener('click', (e) => {
   const item = e.target.closest('.plan-item'); if (!item) return;
   if (e.target.closest('[data-del]')) { if (confirm('Delete this saved plan?')) { deletePlan(item.dataset.id); renderPlans(); } return; }
   const p = getPlan(item.dataset.id);
-  if (p) { state.planId = p.id; loadPlanData(p.data); plansPop.hidden = true; toast(`Opened ${p.name}`); }
+  if (p) { state.planId = p.id; loadPlanData(p.data); planSavedSnap = routeSnap(); renderPlanStatus(); plansPop.hidden = true; toast(`Opened ${p.name}`); }
 });
 document.getElementById('btnSavePlan').addEventListener('click', () => {
   const name = prompt('Name for this plan', planName());
   if (!name) return;
   state.planId = savePlan(name, planData(), state.planId);
+  planSavedSnap = routeSnap();
+  renderPlanStatus();
   renderPlans(); toast('Plan saved'); scheduleSave();
 });
 // Backup: every saved plan plus Settings in one file (keep it in iCloud Drive / Files; open it on another device)
@@ -2737,8 +2868,81 @@ for (const id of ['profileCanvas', 'profileCanvasSheet']) {
 let saveTimer = null;
 function scheduleSave() { clearTimeout(saveTimer); saveTimer = setTimeout(save, 300); }
 
+/* Panel width on wide screens: drag the panel's right edge; remembered */
+(function panelResize() {
+  const h = document.getElementById('panelResize'); if (!h) return;
+  const apply = (w) => { if (w) document.documentElement.style.setProperty('--side-w', `${w}px`); };
+  apply(state.view.panelW);
+  let start = null;
+  h.addEventListener('pointerdown', (e) => { start = { x: e.clientX, w: document.getElementById('sheet').getBoundingClientRect().width }; h.setPointerCapture(e.pointerId); document.body.classList.add('resizing'); });
+  h.addEventListener('pointermove', (e) => {
+    if (!start) return;
+    const w = Math.round(Math.max(360, Math.min(window.innerWidth * 0.7, start.w + e.clientX - start.x)));
+    apply(w); state.view.panelW = w;
+  });
+  const end = () => { if (!start) return; start = null; document.body.classList.remove('resizing'); map.invalidateSize(); scheduleSave(); };
+  h.addEventListener('pointerup', end); h.addEventListener('pointercancel', end);
+  h.addEventListener('dblclick', () => { delete state.view.panelW; document.documentElement.style.removeProperty('--side-w'); map.invalidateSize(); scheduleSave(); });
+})();
+
+/* ---------------- Undo / redo of route changes (taps, drags, deletes, library, sheet edits, clear) ----------------
+ * After every change the routes are compared with the last snapshot; a difference is one undo step.
+ * Winds filled in automatically are left out of the comparison (they are refreshed on their own).
+ * Switching mission leg or opening another plan starts a fresh history. */
+var undoStack = [], redoStack = [], lastSnap = null, lastCtx = null, restoring = false;
+function routeSnap() { return JSON.stringify({ main: state.main, alt: state.alt }); }
+function snapKey(snap) {
+  const o = JSON.parse(snap);
+  for (const k of ['main', 'alt']) for (const w of (o[k] && o[k].waypoints) || []) if (w.windSrc !== 'manual') { delete w.wdir; delete w.wspd; delete w.windSrc; }
+  return JSON.stringify(o);
+}
+function trackHistory() {
+  const ctx = `${state.mission ? state.mission.active : ''}|${state.planId || ''}`;
+  const cur = routeSnap();
+  if (ctx !== lastCtx) { undoStack = []; redoStack = []; lastCtx = ctx; lastSnap = cur; return syncUndoButtons(); }
+  if (libQuiet) return; // a route being built point by point: one undo step for the whole build
+  if (restoring || lastSnap == null) { lastSnap = cur; return syncUndoButtons(); }
+  if (snapKey(cur) !== snapKey(lastSnap)) { undoStack.push(lastSnap); if (undoStack.length > 60) undoStack.shift(); redoStack = []; }
+  lastSnap = cur;
+  syncUndoButtons();
+}
+function syncUndoButtons() {
+  const u = document.getElementById('btnUndo'), r = document.getElementById('btnRedo');
+  if (u) u.disabled = !undoStack.length;
+  if (r) r.disabled = !redoStack.length;
+}
+function restoreSnap(snap) {
+  const o = JSON.parse(snap);
+  restoring = true;
+  try { state.main = o.main; state.alt = o.alt; update({ rerenderPanels: true, winds: false }); } finally { restoring = false; }
+  lastSnap = snap; syncUndoButtons();
+}
+function undo() { if (!undoStack.length) return toast('Nothing to undo'); redoStack.push(routeSnap()); restoreSnap(undoStack.pop()); toast('Undone'); }
+function redo() { if (!redoStack.length) return toast('Nothing to redo'); undoStack.push(routeSnap()); restoreSnap(redoStack.pop()); toast('Redone'); }
+document.getElementById('btnUndo').addEventListener('click', undo);
+document.getElementById('btnRedo').addEventListener('click', redo);
+document.addEventListener('keydown', (e) => {
+  if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z' || e.target.matches('input, textarea, select')) return;
+  e.preventDefault(); if (e.shiftKey) redo(); else undo();
+});
+
+/* Plan status under the callsign: which plan is open and whether it is saved */
+var planSavedSnap = null;
+function renderPlanStatus() {
+  const el = document.getElementById('planStatus'); if (!el) return;
+  const dep = endpoint('main', 0)?.icao || state.main.waypoints[0]?.name || '', dest = endpoint('main', -1)?.icao || state.main.waypoints.at(-1)?.name || '';
+  const p = state.planId && getPlan(state.planId);
+  const ml = state.mission && state.mission.legs.find((l) => l.id === state.mission.active);
+  const what = ml ? `Mission · ${esc(ml.label)}` : p ? `Plan “${esc(p.name)}”` : 'Unsaved plan';
+  const edited = p && planSavedSnap && planSavedSnap !== routeSnap();
+  const saved = p ? (edited ? '<span class="st warn">changed since saved — Plans → Save</span>' : `<span class="st ok">saved ${new Date(p.saved).toTimeString().slice(0, 5)}</span>`) : ml ? '<span class="st ok">kept with the mission</span>' : '<span class="st">kept on this device · Plans → Save to name it</span>';
+  el.innerHTML = `${state.main.waypoints.length > 1 ? `<b>${esc(dep)} → ${esc(dest)}</b> · ` : ''}${what} · ${saved}`;
+}
+
 function update(opts = {}) {
   result = compute();
+  trackHistory();
+  renderPlanStatus();
   drawRoutes();
   renderSummary();
   renderMbSummary();
@@ -2832,11 +3036,15 @@ function setDetent(i, animate = true) {
 /* ---------------- Misc UI ---------------- */
 
 let toastTimer;
+var msgLog = [];
 function toast(msg) {
   if (libQuiet) return;
   const t = document.getElementById('toast');
   t.textContent = msg; t.hidden = false; t.classList.remove('ask'); t.onclick = null;
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 2600);
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, Math.min(9000, Math.max(2600, String(msg).length * 55)));
+  t.onclick = () => { t.hidden = true; clearTimeout(toastTimer); };
+  msgLog.unshift({ at: new Date(), msg: String(msg) }); msgLog.length = Math.min(msgLog.length, 15);
+  const dot = document.getElementById('btnLog'); if (dot) dot.classList.add('has-new');
 }
 // A short question in the toast with buttons, e.g. "Add E again" / "Select point 2"
 function choice(msg, buttons) {
@@ -2851,6 +3059,16 @@ function choice(msg, buttons) {
   };
 }
 function haptic() { if (libQuiet) return; if (navigator.vibrate) navigator.vibrate(8); }
+
+// Recent messages (the tips and confirmations that pop up at the top), so none is lost
+document.getElementById('btnLog')?.addEventListener('click', () => {
+  const pop = document.getElementById('logPop'); if (!pop) return;
+  document.getElementById('btnLog').classList.remove('has-new');
+  if (!pop.hidden) { pop.hidden = true; return; }
+  pop.innerHTML = `<div class="pop-title">Recent messages</div>${msgLog.length ? msgLog.map((m) => `<div class="log-row"><span class="label">${m.at.toTimeString().slice(0, 5)}</span><span>${esc(m.msg)}</span></div>`).join('') : '<div class="pop-note">No messages yet.</div>'}`;
+  pop.hidden = false;
+});
+document.addEventListener('click', (e) => { const pop = document.getElementById('logPop'); if (pop && !pop.hidden && !e.target.closest('#logPop, #btnLog')) pop.hidden = true; });
 
 const layersPop = document.getElementById('layersPop');
 document.getElementById('btnLayers').addEventListener('click', (e) => { e.stopPropagation(); layersPop.hidden = !layersPop.hidden; });

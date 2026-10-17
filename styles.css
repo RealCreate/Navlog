@@ -538,3 +538,97 @@ input.sc.ov, .ov-key { background: #ffe7a8; }
 .ov-key { padding: 0 4px; border-radius: 3px; }
 
 .sheet-open-btn { margin-top: 8px; width: 100%; }
+
+/* ---------- Colour and separation: you always see which step, tab and route you are working on ---------- */
+:root { --c-tab-route: var(--c-plan); --c-tab-navlog: #5856d6; --c-tab-fuel: #c77c00; --c-tab-profile: #2e9d55; }
+@media (prefers-color-scheme: dark) { :root { --c-tab-navlog: #8e8cff; --c-tab-fuel: #ffb340; --c-tab-profile: #4cd27a; } }
+/* steps: the open one is tinted in its colour with a coloured underline */
+.steps button.on { background: color-mix(in srgb, var(--c) 15%, var(--bg)); color: var(--c); box-shadow: inset 0 -3px 0 var(--c), 0 2px 6px rgba(0,0,0,0.10); }
+.steps button:not(.on) .lbl { color: var(--label2); }
+/* plan tabs, each with its own colour */
+#tabs button[data-tab=route] { --c: var(--c-tab-route); }
+#tabs button[data-tab=navlog] { --c: var(--c-tab-navlog); }
+#tabs button[data-tab=fuel] { --c: var(--c-tab-fuel); }
+#tabs button[data-tab=profile] { --c: var(--c-tab-profile); }
+#tabs button.on, #routeSel button.on { background: color-mix(in srgb, var(--c) 16%, var(--bg)); color: var(--c); font-weight: 700; box-shadow: inset 0 -3px 0 var(--c); }
+/* main pink / alternate blue, as on the map */
+#routeSel button[data-route=main] { --c: var(--route); }
+#routeSel button[data-route=alt] { --c: var(--alt); }
+#routeSel button::before { content: ''; display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--c); margin-right: 6px; vertical-align: 0; }
+/* the panel takes the colour of what is open */
+.sheet[data-mode=plan][data-tab=navlog] { --accent: var(--c-tab-navlog); }
+.sheet[data-mode=plan][data-tab=fuel] { --accent: var(--c-tab-fuel); }
+.sheet[data-mode=plan][data-tab=profile] { --accent: var(--c-tab-profile); }
+.sheet[data-mode=plan][data-route=alt]:not([data-tab=fuel]) { --accent: var(--alt); }
+.sheet[data-mode=plan][data-route=alt]:not([data-tab=fuel]) .sheet-body::before {
+  content: 'ALTERNATE ROUTE — you are editing the alternate'; display: block; margin: 2px 0 10px; padding: 7px 12px; border-radius: 10px;
+  background: color-mix(in srgb, var(--alt) 14%, transparent); color: var(--alt); font: 800 12px/1.2 var(--font); letter-spacing: 0.03em; }
+/* sections: coloured marker on each title, a tinted edge on each card, more air between them */
+.sheet .group-title { color: var(--accent); font-weight: 700; }
+.sheet .group-title > span:first-child::before { content: ''; display: inline-block; width: 4px; height: 14px; border-radius: 2px; background: var(--accent); margin-right: 8px; vertical-align: -2px; }
+.sheet .group { border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--sep)); box-shadow: 0 1px 4px rgba(0,0,0,0.05); }
+.sheet .group + .group-title { margin-top: 26px; }
+.sheet .tabs { border-bottom: 1px solid color-mix(in srgb, var(--accent) 25%, var(--sep)); margin-bottom: 4px; }
+
+.btn.icon-only { min-width: 38px; padding: 0 8px; font-size: 18px; font-weight: 700; }
+.btn.icon-only:disabled { opacity: 0.35; }
+
+ul.issues.tappable li { cursor: pointer; }
+ul.issues.tappable li:active { filter: brightness(0.95); }
+ul.issues li .go { margin-left: auto; padding-left: 8px; color: var(--label3, #999); font-size: 18px; line-height: 1; align-self: center; }
+@keyframes flashbg { 0% { box-shadow: 0 0 0 3px var(--accent); } 100% { box-shadow: 0 0 0 0 transparent; } }
+.flash { animation: flashbg 1.4s ease-out 2; border-radius: 12px; }
+
+ul.ready-list li { cursor: pointer; }
+ul.issues li.ok { background: rgba(52,199,89,0.10); }
+ul.issues li.ok .ic { color: #1f9d55; }
+ul.ready-list li b { font-weight: 700; }
+
+/* compact route list */
+.wp.compact { display: flex; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; min-height: 48px; }
+.wp.compact .wp-n { flex: none; }
+.wp.compact .wp-cname { font-weight: 700; font-size: 15px; min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wp.compact .wp-line { display: flex; gap: 10px; font-size: 13px; color: var(--label2); flex: none; font-variant-numeric: tabular-nums; }
+.wp.compact .wp-line b { color: var(--label); }
+.wp.compact .go { color: var(--label3, #999); font-size: 18px; }
+.wp-flag { flex: none; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--warn, #ff9f0a); color: #fff; font-weight: 900; font-size: 12px; }
+.wp.open { box-shadow: inset 4px 0 0 var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
+@media (max-width: 520px) { .wp.compact .wp-line span:nth-child(4) { display: none; } }
+
+/* plan status */
+.plan-status { padding: 0 20px 10px; font-size: 12.5px; color: var(--label2); line-height: 1.35; }
+.plan-status b { color: var(--label); }
+.plan-status .st.ok { color: #1f9d55; }
+.plan-status .st.warn { color: var(--warn, #c77c00); font-weight: 600; }
+.sheet:not([data-mode=plan]) .plan-status { display: none; }
+/* recent messages */
+#btnLog { position: relative; }
+#btnLog.has-new::after { content: ''; position: absolute; top: 9px; right: 10px; width: 8px; height: 8px; border-radius: 50%; background: #ff3b30; }
+.log-pop { max-height: 60vh; overflow: auto; width: 320px; }
+.log-row { display: grid; grid-template-columns: 42px 1fr; gap: 6px; padding: 7px 4px; border-top: 0.5px solid var(--sep); font-size: 13px; line-height: 1.35; }
+.toast { cursor: pointer; }
+/* leg card */
+.leg-popup .leaflet-popup-content { margin: 12px 14px; }
+.leg-card-pop { --c: var(--route); font: 500 13px/1.3 var(--font); min-width: 230px; }
+.leg-card-pop.alt { --c: var(--alt); }
+.lc-title { font-weight: 800; font-size: 14px; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+.lc-n { display: inline-grid; place-items: center; min-width: 22px; height: 22px; border-radius: 6px; background: var(--c); color: #fff; font-size: 12px; padding: 0 4px; }
+.lc-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px 10px; margin-bottom: 8px; }
+.lc-grid span { display: block; font-size: 10.5px; color: #777; text-transform: uppercase; letter-spacing: 0.03em; }
+.lc-grid b { font-size: 15px; font-variant-numeric: tabular-nums; }
+.lc-note { font-size: 12px; color: #555; margin-bottom: 6px; }
+.bad-t { color: #d70015; }
+.leg-card-pop .btn { width: 100%; background: var(--c); }
+.hat { cursor: pointer; }
+/* panel width handle (wide screens) */
+.panel-resize { display: none; }
+@media (min-width: 900px) {
+  .panel-resize { display: block; position: fixed; z-index: 1002; top: calc(var(--safe-t) + 80px); bottom: calc(40px + var(--safe-b)); left: calc(12px + var(--side-w) - 5px); width: 10px; cursor: col-resize; touch-action: none; }
+  .panel-resize::after { content: ''; position: absolute; left: 3px; top: 50%; width: 4px; height: 44px; margin-top: -22px; border-radius: 2px; background: var(--label3, #aaa); opacity: 0.55; }
+  .panel-resize:hover::after, body.resizing .panel-resize::after { opacity: 1; background: var(--accent, #0a84ff); }
+  .panel-closed .panel-resize { display: none; }
+  body.resizing { user-select: none; }
+  body.resizing .sheet { transition: none; }
+}
+#routeSel button { white-space: nowrap; display: inline-flex; align-items: center; justify-content: center; }
+#routeSel button::before { flex: none; }

@@ -44,11 +44,16 @@
     <button class="glass round" id="btnLayers" type="button" aria-label="Map layers">
       <svg viewBox="0 0 24 24"><path d="M12 3 2.5 8 12 13l9.5-5L12 3Z"/><path d="m2.5 12 9.5 5 9.5-5"/><path d="m2.5 16 9.5 5 9.5-5"/></svg>
     </button>
+    <button class="glass round" id="btnLog" type="button" aria-label="Recent messages" title="Recent messages">
+      <svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg>
+    </button>
     <button class="glass round" id="btnHome" type="button" aria-label="Centre on route or Burgos">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
     </button>
   </div>
 
+  <div class="glass popover log-pop" id="logPop" hidden></div>
+  <div class="panel-resize" id="panelResize" title="Drag to make the panel wider or narrower (double-tap to reset)"></div>
   <div class="glass popover" id="layersPop" hidden>
     <div class="pop-title">Chart</div>
     <label class="radio"><input type="radio" name="base" value="chart" checked> Navlog chart (terrain + airspace)</label>
@@ -88,9 +93,12 @@
 
     <div class="planbar" id="planBar">
       <label class="field callsign"><span>Callsign</span><input id="callsignInput" autocapitalize="characters" autocomplete="off" spellcheck="false"></label>
+      <button class="btn small icon-only" id="btnUndo" type="button" aria-label="Undo" title="Undo" disabled>↶</button>
+      <button class="btn small icon-only" id="btnRedo" type="button" aria-label="Redo" title="Redo" disabled>↷</button>
       <button class="btn small" id="btnPlans" type="button">Plans</button>
       <button class="btn small" id="btnWinds" type="button">Update winds</button>
     </div>
+    <div class="plan-status" id="planStatus"></div>
 
     <div class="summary" id="summary">
       <div class="stat"><span class="k">Distance</span><span class="v" id="sDist">0 NM</span></div>
