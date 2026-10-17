@@ -722,7 +722,7 @@ function drawRoutes() {
       h.on('click', (e) => L.DomEvent.stopPropagation(e));
     }
     wps.forEach((w, i) => {
-      const mk = L.marker([w.lat, w.lon], { pane: 'wpts', draggable: true, icon: wpIcon(i + 1, isAlt, w.id === selectedId), keyboard: false }).addTo(routeLayer);
+      const mk = L.marker([w.lat, w.lon], { pane: 'wpts', draggable: true, icon: wpIcon(i + 1, isAlt, w.id === selectedId), keyboard: false, zIndexOffset: w.id === selectedId ? 1000 : 0 }).addTo(routeLayer);
       mk.bindTooltip(w.name, { permanent: true, direction: 'right', className: 'wpt-tip', offset: [10, 0] });
       mk.on('click', (e) => {
         L.DomEvent.stopPropagation(e);
@@ -732,7 +732,27 @@ function drawRoutes() {
           addPoint(ref);
           return;
         }
-        selectWaypoint(w.id, true);
+        // Points on top of each other (e.g. leaving and returning via the same reporting point):
+        // each tap selects the next one, which then comes to the top so it can be dragged.
+        const here = map.latLngToContainerPoint([w.lat, w.lon]);
+        const stack = wps.filter((x) => map.latLngToContainerPoint([x.lat, x.lon]).distanceTo(here) < 14);
+        const cur = stack.findIndex((x) => x.id === selectedId);
+        const next = stack.length > 1 ? stack[(cur + 1) % stack.length] : w;
+        // A reporting point or aerodrome already in the route, tapped while the route is still open:
+        // the student may want to fly through it again (out and back via E) — ask.
+        const ref = w.ref && POINTS.find((p) => p.key === w.ref);
+        const lastW = wps[wps.length - 1];
+        const closed = wps.length > 1 && lastW.ref && (POINTS.find((p) => p.key === lastW.ref) || {}).type === 'ad';
+        if (ref && key === state.active && !closed && lastW.id !== w.id && !(lastW.ref && lastW.ref === w.ref)) {
+          selectWaypoint(next.id, false);
+          choice(`${ref.type === 'ad' ? ref.ad : refName(ref)} is already point ${wps.indexOf(w) + 1}.`, [
+            { label: `Add ${ref.type === 'ad' ? ref.ad : ref.id || refName(ref)} again`, run: () => addPoint(ref) },
+            { label: `Select point ${wps.indexOf(next) + 1}`, run: () => selectWaypoint(next.id, true) },
+          ]);
+          return;
+        }
+        selectWaypoint(next.id, true);
+        if (stack.length > 1) toast(`Point ${wps.indexOf(next) + 1} · ${next.name} — ${stack.length} points here, tap again for the next`);
       });
       mk.on('drag', (e) => showSnapHint(nearestRef(e.target.getLatLng())));
       mk.on('dragend', (e) => {
@@ -1024,13 +1044,24 @@ function companyAlternate() {
   return d === 'LEBG' ? 'LERJ' : d === 'LERJ' ? 'LEBG' : null;
 }
 
+// A point flown at its published (VAC / SOP) altitude: part of a departure or arrival, or any reporting
+// point of the aerodrome the route starts or ends at — however it was added (tapped, dragged, from a plan).
+function isProcPoint(wps, i) {
+  const w = wps[i]; if (!w) return false;
+  if (w.proc || w.entry) return true;
+  const p = w.ref && POINTS.find((q) => q.key === w.ref);
+  if (!p || p.type !== 'vrp') return false;
+  const adOf = (x) => { const q = x && x.ref && POINTS.find((r) => r.key === x.ref); return q ? q.ad : null; };
+  return p.ad === adOf(wps[0]) || p.ad === adOf(wps[wps.length - 1]);
+}
+
 function seraIssues(key) {
   const out = [];
   const r = state[key], nl = result[key];
   nl.rows.forEach((row) => {
     if (row.phase !== 'cruise' || row.auto) return;
     const to = r.waypoints[row.legIndex];
-    if (to && (to.entry || to.proc)) return; // procedure altitude (VAC / SOP)
+    if (to && isProcPoint(r.waypoints, row.legIndex)) return; // procedure altitude (VAC / SOP)
     const h = semicircularHint(row.mc, row.alt);
     if (h) out.push({ level: 'warn', text: `${row.from} → ${row.to}: ${h}` });
   });
@@ -1127,9 +1158,9 @@ function renderRoute() {
           const fuel = Math.round(legRows.reduce((t, x) => t + x.fuel, 0) * 10) / 10;
           const last = legRows[legRows.length - 1];
           const dist = legRows.reduce((t, x) => t + x.dist, 0);
-          const sera = !w.proc && !w.entry && !(i === 1 && stdOn.dep) && !(i === wps.length - 1 && stdOn.arr) ? semicircularHint(last.mc, parseAlt(w.alt)) : null;
+          const sera = !isProcPoint(wps, i) && !(i === 1 && stdOn.dep) && !(i === wps.length - 1 && stdOn.arr) ? semicircularHint(last.mc, parseAlt(w.alt)) : null;
           const lm = legMinimum(key, i);
-          const lmLow = lm && !w.proc && !w.entry && parseAlt(w.alt) != null && parseAlt(w.alt) < lm.need;
+          const lmLow = lm && !isProcPoint(wps, i) && parseAlt(w.alt) != null && parseAlt(w.alt) < lm.need;
           html += `<div class="leg-out">${w.proc ? `<span class="tag">${w.proc === 'dep' ? 'Departure route' : 'Arrival route'} · VAC</span>` : ''}<span>TC <b>${last.tc}°</b></span><span>MH <b>${last.mh}°</b></span><span>Dist <b>${dist} NM</b></span><span>GS <b>${last.gs} kt</b></span><span>ETE <b>${fmtMMSS(ete)}</b></span><span>Fuel <b>${fuel} L</b></span>${legRows.length > 1 ? `<span>incl. <b>${legRows.find((x) => x.auto)?.to || ''}</b></span>` : ''}${lm ? `<span class="${lmLow ? 'minalt low' : 'minalt'}" title="${esc(lm.why)}">Min <b>${lm.need} ft</b></span>` : ''}${sera ? `<span class="hint">${sera}</span>` : ''}${lmLow ? `<span class="hint">Below the minimum: ${esc(lm.why)}</span>` : ''}</div>`;
         }
       }
@@ -1662,7 +1693,7 @@ function planIssues() {
       const w = wps[i], alt = parseAlt(w.alt);
       if (alt == null || /^FL/i.test(String(w.alt))) continue;
       const lm = legMinimum(key, i);
-      const procLeg = w.proc || w.entry; // VAC / SOP altitude: flown as published, the check is only a note
+      const procLeg = isProcPoint(wps, i); // VAC / SOP altitude: flown as published, the check is only a note
       if (lm && alt < lm.need) issues.push({ level: procLeg ? 'info' : 'warn', text: `${key === 'alt' ? 'Alternate ' : ''}${wps[i - 1].name} → ${w.name}: ${alt} ft is below ${procLeg ? '1000 ft above the highest obstacle' : `the minimum ${lm.need} ft`} — ${lm.why}${procLeg ? ' (published VAC/SOP altitude — keep the obstacle in sight)' : `; SOP 1000 ft above the highest obstacle${lm.mountain ? ' (2000 ft over mountains)' : ''}`}` });
     }
   }
@@ -2569,8 +2600,20 @@ let toastTimer;
 function toast(msg) {
   if (libQuiet) return;
   const t = document.getElementById('toast');
-  t.textContent = msg; t.hidden = false;
+  t.textContent = msg; t.hidden = false; t.classList.remove('ask'); t.onclick = null;
   clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 2600);
+}
+// A short question in the toast with buttons, e.g. "Add E again" / "Select point 2"
+function choice(msg, buttons) {
+  const t = document.getElementById('toast');
+  t.innerHTML = `<div>${esc(msg)}</div><div class="toast-actions">${buttons.map((b, i) => `<button class="btn small ${i === 0 ? 'primary' : ''}" data-i="${i}">${esc(b.label)}</button>`).join('')}</div>`;
+  t.hidden = false; t.classList.add('ask');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; t.classList.remove('ask'); }, 7000);
+  t.onclick = (e) => {
+    const b = e.target.closest('button[data-i]'); if (!b) return;
+    t.hidden = true; t.classList.remove('ask'); t.onclick = null; clearTimeout(toastTimer);
+    buttons[+b.dataset.i].run();
+  };
 }
 function haptic() { if (libQuiet) return; if (navigator.vibrate) navigator.vibrate(8); }
 

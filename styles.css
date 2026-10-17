@@ -207,6 +207,8 @@ table.nl tr.std td.ete { color: var(--tint); }
 .pp-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .pp-actions a { color: var(--tint); font-weight: 600; text-decoration: none; font-size: 13px; }
 
+.toast-actions { display: flex; gap: 8px; margin-top: 8px; justify-content: center; }
+.toast.ask { pointer-events: auto; }
 .toast { position: fixed; top: calc(var(--safe-t) + 70px); left: 50%; transform: translateX(-50%); z-index: 2000; padding: 10px 16px; border-radius: 14px; font-size: 14px; font-weight: 500; max-width: 90vw; animation: pop 220ms ease-out; }
 
 @media (max-width: 640px) {
