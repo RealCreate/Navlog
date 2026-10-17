@@ -320,7 +320,7 @@ table.mbt tr.total.bad td:not(.wpt) { color: var(--bad); }
   .narrow-only { display: none; }
   .profile-dock {
     display: flex; flex-direction: column; position: fixed; z-index: 950;
-    left: var(--panel-x); right: 12px; bottom: calc(8px + var(--safe-b)); height: var(--dock-h);
+    left: var(--panel-x); right: 12px; bottom: calc(12px + var(--safe-b)); height: var(--dock-h);
     border-radius: 14px; border: 0.5px solid var(--glass-edge); overflow: hidden;
     transition: height 320ms cubic-bezier(.2,.9,.25,1), left 380ms cubic-bezier(.2,.9,.25,1);
   }
@@ -428,7 +428,7 @@ details.options[open] > summary { border-bottom: 0.5px solid var(--sep); }
 .sheet[data-mode=mb] { --accent: var(--c-mb); }
 .sheet[data-mode=brief] { --accent: var(--c-brief); }
 .sheet[data-mode=settings] { --accent: #636366; }
-.sheet::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 4px; border-radius: 22px 22px 0 0; background: var(--accent); opacity: 0.85; pointer-events: none; }
+.sheet::before { content: ''; position: absolute; left: 22px; right: 22px; top: 0; height: 4px; border-radius: 0 0 4px 4px; background: var(--accent); opacity: 0.9; pointer-events: none; }
 .sheet .btn.primary { background: var(--accent); }
 .sheet .group-title { color: var(--accent); }
 .sheet .group-title .btn { color: var(--label); }

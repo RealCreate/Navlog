@@ -684,6 +684,8 @@ function drawMissionGuide() {
 }
 
 function drawRoutes() {
+  // a leg card whose leg no longer exists (route reset, point deleted, undo, another mission leg) closes
+  if (legCardOf) { const w = state[legCardOf.key].waypoints; const i = w.findIndex((x) => x.id === legCardOf.wid); if (i < 1 || w[i - 1].id !== legCardOf.from) map.closePopup(); }
   routeLayer.clearLayers();
   hatJobs = [];
   drawMissionGuide();
@@ -777,6 +779,8 @@ function drawRoutes() {
 }
 
 /* Leg card: tap a HAT box on the map for that leg's numbers */
+var legCardOf = null;
+map.on('popupclose', () => { legCardOf = null; });
 function openLegCard(key, i, latlng) {
   const wps = state[key].waypoints, w = wps[i], a = wps[i - 1];
   const rows = result[key].rows.filter((x) => x.legIndex === i);
@@ -794,6 +798,7 @@ function openLegCard(key, i, latlng) {
     ${rows.length > 1 ? `<div class="lc-note">includes ${esc(rows.find((x) => x.auto)?.to || '')}</div>` : ''}
     ${low ? `<div class="lc-note bad-t">Below the minimum: ${esc(lm.why)}</div>` : ''}
     <button class="btn small primary" data-legedit="${key}:${w.id}">Edit this leg</button></div>`;
+  legCardOf = { key, wid: w.id, from: a.id };
   L.popup({ closeButton: true, autoPan: true, className: 'leg-popup', maxWidth: 300 }).setLatLng(latlng).setContent(html).openOn(map);
 }
 document.addEventListener('click', (e) => {
