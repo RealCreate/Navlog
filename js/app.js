@@ -758,6 +758,7 @@ function drawRoutes() {
           ]);
           return;
         }
+        if (stack.length === 1 && w.id === selectedId && state.view.compact !== false) { selectedId = null; drawRoutes(); renderRoute(); return; }
         selectWaypoint(next.id, true);
         if (stack.length > 1) toast(`Point ${wps.indexOf(next) + 1} · ${next.name} — ${stack.length} points here, tap again for the next`);
       });
@@ -1127,7 +1128,7 @@ function renderRoute() {
 
   const lm = state.flight.levelMode === 'alt' ? 'alt' : 'fl';
   const taFt = endpoint('main', 0)?.ta || 6000;
-  html += `<div class="group levelmode"><div class="row"><span class="grow"><b>Levels on the navlog</b><br><span class="label">${lm === 'fl' ? `Flight levels above the transition altitude (${taFt} ft), altitudes below` : 'Altitudes on QNH everywhere (e.g. 6500 instead of FL065)'}</span></span>
+  html += `<div class="group levelmode"><div class="row"><span class="grow"><b>Levels</b> <span class="label">${lm === 'fl' ? `FL above ${taFt} ft (transition altitude)` : 'altitudes on QNH everywhere'}</span></span>
     <div class="segmented small"><button data-levelmode="fl" class="${lm === 'fl' ? 'on' : ''}">FL</button><button data-levelmode="alt" class="${lm === 'alt' ? 'on' : ''}">ALT</button></div></div></div>`;
   {
     const ads = APPROVED.filter((x) => adPoint(x));
@@ -1158,7 +1159,7 @@ function renderRoute() {
   if (semi.length) html = `<ul class="issues tappable">${semi.map((x) => `<li class="warn" data-go="${esc(JSON.stringify(issueTarget(x)))}"><span class="ic">!</span><span>${esc(x.text)}</span><span class="go">›</span></li>`).join('')}</ul>` + html;
 
   html += `<div class="group-title"><span>${isAlt ? 'Alternate route' : 'Route'} · ${wps.length} point${wps.length === 1 ? '' : 's'}</span>
-    <span><button class="btn small" data-act="compact" title="One line per point, or every point open">${state.view.compact === false ? 'Compact' : 'Expand all'}</button> <button class="btn small" data-act="windall">Wind for all legs</button> <button class="btn small" data-act="reverse">Reverse</button> <button class="btn small danger" data-act="clear">Clear</button></span></div>`;
+    <span><button class="btn small" data-act="compact" title="One line per point, or every point open">${state.view.compact === false ? 'Compact' : 'Expand'}</button> <button class="btn small" data-act="windall" title="Same wind for every leg">All winds</button> <button class="btn small" data-act="reverse">Reverse</button> <button class="btn small danger" data-act="clear">Clear</button></span></div>`;
 
   const sugg = isAlt ? companyAlternate() : null;
   if (sugg && (wps.length <= 1)) {
@@ -1190,14 +1191,15 @@ function renderRoute() {
         return;
       }
       html += `<div class="wp ${compact ? 'open' : ''}" data-id="${w.id}">
-        <div class="wp-n">${i + 1}</div>
+        <div class="wp-n" ${compact ? `data-collapse="${w.id}" title="Close"` : ''}>${i + 1}</div>
         <input class="wp-name" data-f="name" value="${esc(w.name)}" aria-label="Waypoint name">
         <div class="wp-actions">
           <button class="icon-btn" data-act="up" aria-label="Move up" ${i === 0 ? 'disabled' : ''}>${ICON.up}</button>
           <button class="icon-btn" data-act="down" aria-label="Move down" ${i === wps.length - 1 ? 'disabled' : ''}>${ICON.down}</button>
           <button class="icon-btn" data-act="del" aria-label="Delete">${ICON.trash}</button>
+          ${compact ? `<button class="icon-btn collapse-btn" data-collapse="${w.id}" aria-label="Close">⌃</button>` : ''}
         </div>
-        <div class="wp-sub">${esc(sub)}${adByIcao(w.ref) ? ` · ${adByIcao(w.ref).elev} ft · <a href="${adByIcao(w.ref).vac}" target="_blank" rel="noopener">VAC ↗</a>` : ''}</div>`;
+        <div class="wp-sub" ${compact ? `data-collapse="${w.id}"` : ''}>${esc(sub)}${adByIcao(w.ref) ? ` · ${adByIcao(w.ref).elev} ft · <a href="${adByIcao(w.ref).vac}" target="_blank" rel="noopener">VAC ↗</a>` : ''}</div>`;
       if (i > 0) {
         const altFt = parseAlt(w.alt) || 0;
         const tasPh = (i === 1 && stdOn.dep) || (i === wps.length - 1 && stdOn.arr) ? planSop().tasBase : cruiseTas(altFt, planSop());
@@ -1264,6 +1266,8 @@ panels.route.addEventListener('change', (e) => {
 });
 panels.route.addEventListener('toggle', (e) => { if (e.target.matches('details.lib')) { state.view.libOpen = e.target.open; scheduleSave(); } else if (e.target.matches('details.options')) { state.view.optsOpen = e.target.open; scheduleSave(); } }, true);
 panels.route.addEventListener('click', (e) => {
+  const col = e.target.closest('[data-collapse]');
+  if (col && !e.target.closest('a')) { selectedId = null; drawRoutes(); renderRoute(); return; }
   const ex = e.target.closest('[data-expand]');
   if (ex) { selectWaypoint(+ex.dataset.expand, false); renderRoute(); const el = panels.route.querySelector(`.wp[data-id="${ex.dataset.expand}"]`); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); return; }
   if (e.target.closest('[data-act=compact]')) { state.view.compact = state.view.compact === false; scheduleSave(); return renderRoute(); }

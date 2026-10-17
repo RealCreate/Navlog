@@ -632,3 +632,31 @@ ul.ready-list li b { font-weight: 700; }
 }
 #routeSel button { white-space: nowrap; display: inline-flex; align-items: center; justify-content: center; }
 #routeSel button::before { flex: none; }
+
+/* ---------- Compact planner header on wide screens: more room for the route ---------- */
+@media (min-width: 900px) {
+  .sheet .modebar { padding-top: 10px; padding-bottom: 8px; }
+  .sheet .planbar { padding-bottom: 6px; }
+  .planbar .callsign { padding: 2px 8px 3px; }
+  .planbar .callsign span { font-size: 10.5px; }
+  .planbar .callsign input { height: 22px; }
+  .planbar .btn.small { height: 34px; }
+  .plan-status { padding-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+  .sheet .summary { flex-wrap: nowrap; padding-bottom: 8px; gap: 10px; align-items: flex-end; }
+  .sheet .summary .btn { flex: 0 0 auto; height: 36px; padding: 0 12px; font-size: 14px; }
+  .sheet .stat .k { font-size: 11px; }
+  .sheet .stat .v { font-size: 17px; }
+  .sheet .tabs { flex-direction: row; flex-wrap: wrap; gap: 6px; padding-bottom: 8px; }
+  .sheet .tabs #tabs { flex: 1 0 100%; }
+  .sheet .tabs #routeSel { flex: 1 1 0; width: auto; min-width: 0; }
+  .sheet .tabs .segmented button { height: 30px; }
+  .sheet .tabs .sheet-open-btn { flex: 0 0 auto; width: auto; margin-top: 0; height: 34px; padding: 0 12px; }
+  .sheet-open-btn .long { display: none; }
+  .levelmode .row { padding-top: 6px; padding-bottom: 6px; }
+  .sheet details.options > summary { padding-top: 12px; padding-bottom: 12px; }
+  .sheet .group-title .btn.small { height: 28px; padding: 0 9px; font-size: 12.5px; }
+  .sheet .group-title > span:first-child { white-space: nowrap; }
+}
+
+.wp.open [data-collapse] { cursor: pointer; }
+.collapse-btn { font-size: 18px; font-weight: 800; line-height: 1; }
