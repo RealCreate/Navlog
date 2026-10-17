@@ -1,4 +1,5 @@
 import { AEMET_API_KEY, AEMET_KEY_EXPIRES } from './aemet-key.js';
+import { bestRoute, avoidAreas, nm as nmDist, MAX_LEG_NM } from './routelib.js';
 import { AERODROMES, POINTS, FLEET_TYPES, fleetType, SOP, adByIcao, mergeAip, procedureFor, PROCEDURES } from './data.js';
 import { computeNavlog, stdFlags, fuelPolicy, fmtMMSS, fmtHMS, fmtVar, fmtAlt, parseAlt, cruiseTas, distanceNm, midpoint, trueCourse } from './nav.js';
 import { buildNavlogPdf, buildMbPdf } from './pdf.js';
@@ -14,7 +15,7 @@ import { chartAirspaces, drawAirspaces, drawAmaGrid, airspaceLabels, worldPx as 
 import { MB_TYPES, computeMb, fmtMoment, cgLimitsAt, KG_TO_LB } from './mb.js';
 import { zl, utc, local } from './time.js';
 import { APPROVED, IFR_ONLY, EASY_FIRST, FULL_STOP, CLOSING_LOCAL, NO_REFUEL, FREQS, AIP_NOTES, aipNotes, aerodromeOpen, airspaceCrossings, crossingIssue, buildFpl, departureBriefing, arrivalBriefing, temThreats } from './rules.js';
-import { listPlans, savePlan, deletePlan, getPlan, planFromPdf, embedPlan } from './plans.js';
+import { listPlans, savePlan, deletePlan, getPlan, planFromPdf, embedPlan, mergePlans } from './plans.js';
 import { sunTimes } from './sun.js';
 
 const L = window.L;
@@ -560,6 +561,67 @@ function addPoint(ref) {
   update({ rerenderPanels: true });
 }
 
+/* ---------------- Route library: ready-made routes between the school's aerodromes ----------------
+ * Built on the spot from the published procedures, the towns on the chart, ENAIRE's airspaces and
+ * grid altitudes: out by a reporting point, town to town (every leg ≤ 20 NM), in by a reporting point.
+ * It goes through addPoint, so departure / arrival procedures and their altitudes apply as when tapped. */
+var libQuiet = false;
+const adPoint = (icao) => POINTS.find((p) => p.type === 'ad' && p.ad === icao);
+function libEnds(icao, kind) {
+  const a = adPoint(icao); if (!a) return [];
+  const pr = PROCEDURES[icao], out = [];
+  if (pr) {
+    const routes = kind === 'dep' && pr.depRoutes ? pr.depRoutes : pr.routes;
+    let ids = Object.values(routes).map((pts) => pts);
+    if (kind === 'arr' && icao === 'LEBG' && state.flight.solo && pr.soloEntry) ids = ids.filter((pts) => pr.soloEntry.includes(pts[pts.length - 1]));
+    for (const pts of ids) {
+      const id = pts[pts.length - 1];
+      if ((pr.avoid || []).includes(id)) continue;
+      const v = vrpRef(icao, id); if (!v) continue;
+      let c = 0, longest = 0, prev = a; for (const pid of pts) { const q = vrpRef(icao, pid); if (q) { const d = nmDist(prev, q); c += d; longest = Math.max(longest, d); prev = q; } }
+      out.push({ id, lat: v.lat, lon: v.lon, cost: c + (longest > MAX_LEG_NM ? 120 : 0) }); // avoid published corridors with legs over the limit when there is another way
+    }
+  } else {
+    for (const v of POINTS.filter((p) => p.type === 'vrp' && p.ad === icao)) out.push({ id: v.id, lat: v.lat, lon: v.lon, cost: nmDist(a, v) });
+  }
+  return out;
+}
+function libAlternateFor(icao, avoid) {
+  const d = adPoint(icao);
+  return APPROVED.filter((x) => x !== icao && x !== avoid && adPoint(x) && !IFR_ONLY.includes(x))
+    .map((x) => ({ x, d: nmDist(d, adPoint(x)) })).sort((a, b) => a.d - b.d)[0]?.x;
+}
+function libLeg(from, to) {
+  const r = bestRoute(libEnds(from, 'dep'), libEnds(to, 'arr'), placesData, avoidAreas(AIRSPACES, [adPoint(from), adPoint(to)]), AMA_CELLS);
+  if (!r) return null;
+  const pts = [adPoint(from), vrpRef(from, r.exit),
+    ...r.points.map((t) => ({ key: `town:${t.name}:${t.lat}`, type: 'town', label: t.name, sub: 'Town', lat: t.lat, lon: t.lon })),
+    vrpRef(to, r.entry), adPoint(to)];
+  return pts.every(Boolean) ? pts : null;
+}
+function buildLibraryRoute(from, to, withAlt = true) {
+  if (!placesData.length || !AIRSPACES.length) return toast('Still loading the chart data — try again in a moment');
+  if (from === to) return toast('Pick two different aerodromes');
+  const main = libLeg(from, to);
+  if (!main) return toast(`No route found from ${from} to ${to} with legs of ${MAX_LEG_NM} NM or less`);
+  const altIcao = withAlt ? libAlternateFor(to) : null;
+  const alt = altIcao ? libLeg(to, altIcao) : null;
+  if ((state.main.waypoints.length > 1 || state.alt.waypoints.length > 1) && !confirm(`Replace the current route with ${from} → ${to}?`)) return;
+  const keepActive = state.active;
+  libQuiet = true;
+  try {
+    state.main = { ...state.main, waypoints: [] };
+    state.alt = { ...state.alt, waypoints: [] };
+    state.active = 'main';
+    for (const p of main) addPoint(p);
+    if (alt) { state.active = 'alt'; for (const p of alt.slice(1)) addPoint(p); }
+  } finally { libQuiet = false; state.active = keepActive === 'alt' && alt ? 'alt' : 'main'; }
+  update({ rerenderPanels: true });
+  setTimeout(fitRoute, 50);
+  const towns = main.filter((p) => p.type === 'town').map((p) => p.label);
+  toast(`${from} → ${towns.join(' → ') || 'direct'} → ${to}${alt ? ` · alternate ${altIcao}` : ''} — check it before you fly it`);
+}
+
 function seedAlternate() {
   const dest = state.main.waypoints[state.main.waypoints.length - 1];
   if (dest) state.alt.waypoints = [{ ...dest, id: ++uid, wdir: '', wspd: '', tas: '' }];
@@ -995,6 +1057,18 @@ function renderRoute() {
   const taFt = endpoint('main', 0)?.ta || 6000;
   html += `<div class="group levelmode"><div class="row"><span class="grow"><b>Levels on the navlog</b><br><span class="label">${lm === 'fl' ? `Flight levels above the transition altitude (${taFt} ft), altitudes below` : 'Altitudes on QNH everywhere (e.g. 6500 instead of FL065)'}</span></span>
     <div class="segmented small"><button data-levelmode="fl" class="${lm === 'fl' ? 'on' : ''}">FL</button><button data-levelmode="alt" class="${lm === 'alt' ? 'on' : ''}">ALT</button></div></div></div>`;
+  {
+    const ads = APPROVED.filter((x) => adPoint(x));
+    const opt = (sel) => ads.map((x) => `<option value="${x}" ${x === sel ? 'selected' : ''}>${x} · ${esc((adByIcao(x) || {}).name || '')}</option>`).join('');
+    const lf = state.view.libFrom || 'LEBG', lt = state.view.libTo || (lf === 'LEBG' ? 'LERJ' : 'LEBG');
+    html += `<details class="group options lib" ${state.view.libOpen ? 'open' : ''}><summary><span>Route library</span><span class="label">ready-made routes</span></summary>
+      <div class="row wrap" style="gap:8px"><label class="field"><span>From</span><select data-lib="from">${opt(lf)}</select></label>
+        <button class="btn small" data-act="libSwap" aria-label="Swap" style="align-self:flex-end">⇄</button>
+        <label class="field"><span>To</span><select data-lib="to">${opt(lt)}</select></label></div>
+      <div class="row"><span class="grow label">Out by a reporting point, town to town with no leg over ${MAX_LEG_NM} NM, in by a reporting point; keeps out of restricted areas, prefers low ground; adds the nearest alternate.</span></div>
+      <div class="row"><button class="btn primary wide" data-act="libBuild">Build route ${esc(lf)} → ${esc(lt)}</button></div>
+    </details>`;
+  }
   const optSummary = [r.stdDep && 'std dep', r.stdArr && 'std arr', state.flight.solo && 'solo', state.flight.lowCloud && 'low cloud'].filter(Boolean).join(' · ') || 'none';
   html += `<details class="group options" ${state.view.optsOpen ? 'open' : ''}><summary><span>Flight options</span><span class="label">${optSummary}</span></summary>
     <div class="toggle-row"><span>Standard departure — ${SOP.stdDepMin} min <small class="label">(only when starting at an aerodrome)</small></span>
@@ -1082,6 +1156,7 @@ function num(v) {
 const numMin0 = (v) => { const n = num(v); return n === '' ? '' : Math.max(0, n); };
 panels.route.addEventListener('change', (e) => {
   const t = e.target;
+  if (t.dataset.lib) { state.view[t.dataset.lib === 'from' ? 'libFrom' : 'libTo'] = t.value; scheduleSave(); return renderPanels(); }
   if (t.dataset.flag) { route()[t.dataset.flag] = t.checked; return update({ rerenderPanels: true }); }
   if (t.hasAttribute('data-solo')) { state.flight.solo = t.checked; if (t.checked) state.flight.lowCloud = false; return update({ rerenderPanels: true }); }
   if (t.hasAttribute('data-lowcloud')) { state.flight.lowCloud = t.checked; toast(t.checked ? 'LEBG low-cloud procedure: depart via S, W or N at 4500 ft; arrive via N, W or S–E-1 at 4000 ft. E point not used.' : 'Normal LEBG procedures'); return update({ rerenderPanels: true }); }
@@ -1098,8 +1173,10 @@ panels.route.addEventListener('change', (e) => {
   if (f === 'wdir' || f === 'wspd') w.windSrc = v === '' ? undefined : 'manual';
   update({ rerenderPanels: true });
 });
-panels.route.addEventListener('toggle', (e) => { if (e.target.matches('details.options')) { state.view.optsOpen = e.target.open; scheduleSave(); } }, true);
+panels.route.addEventListener('toggle', (e) => { if (e.target.matches('details.lib')) { state.view.libOpen = e.target.open; scheduleSave(); } else if (e.target.matches('details.options')) { state.view.optsOpen = e.target.open; scheduleSave(); } }, true);
 panels.route.addEventListener('click', (e) => {
+  if (e.target.closest('[data-act=libBuild]')) { const f = state.view.libFrom || 'LEBG'; return buildLibraryRoute(f, state.view.libTo || (f === 'LEBG' ? 'LERJ' : 'LEBG')); }
+  if (e.target.closest('[data-act=libSwap]')) { const f = state.view.libFrom || 'LEBG', t = state.view.libTo || (f === 'LEBG' ? 'LERJ' : 'LEBG'); state.view.libFrom = t; state.view.libTo = f; scheduleSave(); return renderPanels(); }
   const lmb = e.target.closest('[data-levelmode]');
   if (lmb) { state.flight.levelMode = lmb.dataset.levelmode; toast(lmb.dataset.levelmode === 'alt' ? 'Navlog shows altitudes (QNH)' : 'Navlog shows flight levels above the transition altitude'); return update({ rerenderPanels: true }); }
   if (e.target.closest('[data-act=toMission]')) return document.querySelector('#modes [data-mode=mission]').click();
@@ -1534,6 +1611,18 @@ function planIssues() {
     if (f.solo && !state.unlocked.includes(ad.icao)) issues.push({ level: 'bad', text: `Solo: ${role.toLowerCase()} ${ad.icao} is not one of your unlocked aerodromes` });
   }
   if (!alt) issues.push({ level: 'warn', text: 'No alternate planned — each leg needs an alternate (school policy)' });
+  for (const k of ['main', 'alt']) {
+    const w = state[k].waypoints;
+    for (let i = 1; i < w.length; i++) {
+      const d = nmDist(w[i - 1], w[i]);
+      if (d <= MAX_LEG_NM + 0.05) continue;
+      const adOf = (x) => (x.ref && (POINTS.find((q) => q.key === x.ref) || {}).ad) || null;
+      const published = (w[i].proc || w[i - 1].proc) && adOf(w[i]) && adOf(w[i]) === adOf(w[i - 1]);
+      issues.push(published
+        ? { level: 'info', text: `${w[i - 1].name} → ${w[i].name} is ${d.toFixed(1)} NM, longer than the school's ${MAX_LEG_NM} NM, but it is part of the published ${adOf(w[i])} procedure` }
+        : { level: 'warn', text: `${k === 'alt' ? 'Alternate leg' : 'Leg'} ${w[i - 1].name} → ${w[i].name} is ${d.toFixed(1)} NM — school limit ${MAX_LEG_NM} NM per leg: add a turning point` });
+    }
+  }
   if (f.levelMode === 'alt') {
     const ta = dep?.ta || 6000;
     const hi = Math.max(0, ...['main', 'alt'].flatMap((k) => result[k].rows.map((r) => +r.alt || 0)));
@@ -2118,6 +2207,34 @@ document.getElementById('btnSavePlan').addEventListener('click', () => {
   state.planId = savePlan(name, planData(), state.planId);
   renderPlans(); toast('Plan saved'); scheduleSave();
 });
+// Backup: every saved plan plus Settings in one file (keep it in iCloud Drive / Files; open it on another device)
+document.getElementById('btnExportPlans').addEventListener('click', async () => {
+  const data = { kind: 'navlog-backup', version: 1, exported: new Date().toISOString(), plans: listPlans(), settings: state.settings, unlocked: state.unlocked, mbStudent: state.mb.studentCode };
+  const name = `Navlog_backup_${new Date().toISOString().slice(0, 10)}.json`;
+  const file = new File([JSON.stringify(data)], name, { type: 'application/json' });
+  plansPop.hidden = true;
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file] }); return; } catch (err) { if (err && err.name === 'AbortError') return; }
+  }
+  saveBlob(file, name);
+  toast(`Exported ${data.plans.length} plans and your settings`);
+});
+document.getElementById('backupInput').addEventListener('change', async (e) => {
+  const f = e.target.files && e.target.files[0]; e.target.value = '';
+  if (!f) return;
+  try {
+    const data = JSON.parse(await f.text());
+    if (!data || data.kind !== 'navlog-backup') return toast('That file is not a Navlog backup');
+    const n = mergePlans(data.plans);
+    if (data.settings && confirm('Also restore the settings from the backup (name, signature, callsigns, unlocked aerodromes)?')) {
+      state.settings = { ...state.settings, ...data.settings };
+      if (Array.isArray(data.unlocked)) state.unlocked = data.unlocked;
+      if (data.mbStudent && !state.mb.studentCode) state.mb.studentCode = data.mbStudent;
+    }
+    renderPlans(); update({ rerenderPanels: true });
+    toast(`Imported ${n} plan${n === 1 ? '' : 's'}`);
+  } catch (err) { console.error(err); toast('Could not read the backup file'); }
+});
 document.getElementById('btnNewPlan').addEventListener('click', () => {
   if (!confirm('Start a new plan? Save the current one first if you need it.')) return;
   const keep = { flight: { ...state.flight }, unlocked: state.unlocked, view: state.view, settings: state.settings, mb: { ...defaultState().mb, studentCode: state.mb.studentCode } };
@@ -2450,11 +2567,12 @@ function setDetent(i, animate = true) {
 
 let toastTimer;
 function toast(msg) {
+  if (libQuiet) return;
   const t = document.getElementById('toast');
   t.textContent = msg; t.hidden = false;
   clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 2600);
 }
-function haptic() { if (navigator.vibrate) navigator.vibrate(8); }
+function haptic() { if (libQuiet) return; if (navigator.vibrate) navigator.vibrate(8); }
 
 const layersPop = document.getElementById('layersPop');
 document.getElementById('btnLayers').addEventListener('click', (e) => { e.stopPropagation(); layersPop.hidden = !layersPop.hidden; });

@@ -1,12 +1,12 @@
 // Offline support: app shell is precached; chart tiles are cached as they are viewed
 // (or saved in bulk with "Save chart for offline").
-const VERSION = 'navlog-shell-v39';
+const VERSION = 'navlog-shell-v40';
 const TERRAIN = 'navlog-terrain-v1';
 const TILES = 'navlog-tiles-v1';
 const OWNCHART = 'navlog-ownchart-v1';
 const SHELL = [
   './', 'index.html', 'styles.css', 'manifest.webmanifest',
-  'js/app.js', 'js/data.js', 'js/nav.js', 'js/pdf.js', 'js/sun.js', 'js/profile.js', 'js/places.js', 'js/winds.js', 'js/weather.js', 'js/rules.js', 'js/plans.js', 'js/time.js', 'js/mb.js', 'js/mbpdf.js', 'js/perf.js', 'js/briefpdf.js', 'js/mapprint.js', 'js/notam.js', 'js/aviation.js', 'js/aemet-key.js', 'vendor/pdfjs/pdf.min.mjs', 'vendor/pdfjs/pdf.worker.min.mjs', 'data/aip.json',
+  'js/app.js', 'js/data.js', 'js/nav.js', 'js/pdf.js', 'js/sun.js', 'js/profile.js', 'js/places.js', 'js/winds.js', 'js/weather.js', 'js/rules.js', 'js/plans.js', 'js/time.js', 'js/mb.js', 'js/mbpdf.js', 'js/perf.js', 'js/briefpdf.js', 'js/mapprint.js', 'js/notam.js', 'js/aviation.js', 'js/aemet-key.js', 'js/routelib.js', 'vendor/pdfjs/pdf.min.mjs', 'vendor/pdfjs/pdf.worker.min.mjs', 'data/aip.json',
   'data/places.json', 'assets/mb/P2008.pdf', // other types' sheets are cached the first time they are used
   'vendor/leaflet/leaflet.js', 'vendor/leaflet/leaflet.css', 'vendor/pdf-lib/pdf-lib.min.js',
   'assets/navlog-template.pdf', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png',

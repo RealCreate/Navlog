@@ -15,8 +15,20 @@ export function savePlan(name, data, id) {
   const entry = { id: id || `p${Date.now()}`, name, saved: new Date().toISOString(), data };
   const i = list.findIndex((p) => p.id === entry.id);
   if (i >= 0) list[i] = entry; else list.unshift(entry);
-  store(list.slice(0, 50));
+  store(list.slice(0, 200));
   return entry.id;
+}
+/** Adds plans from a backup file: same id → the newer copy wins. Returns how many were added or updated. */
+export function mergePlans(incoming) {
+  const list = listPlans(); let n = 0;
+  for (const p of incoming || []) {
+    if (!p || !p.id || !p.data) continue;
+    const i = list.findIndex((q) => q.id === p.id);
+    if (i < 0) { list.push(p); n++; } else if (new Date(p.saved) > new Date(list[i].saved)) { list[i] = p; n++; }
+  }
+  list.sort((a, b) => new Date(b.saved) - new Date(a.saved));
+  store(list.slice(0, 200));
+  return n;
 }
 export function deletePlan(id) { store(listPlans().filter((p) => p.id !== id)); }
 export function getPlan(id) { return listPlans().find((p) => p.id === id) || null; }
