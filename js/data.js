@@ -265,11 +265,12 @@ export const PROCEDURES = {
     routes: { N: ['N'], W: ['W'], S: ['E-1', 'S'], E: ['E-1', 'E'] },
     depRoutes: { N: ['N'], W: ['W'], S: ['S'], E: ['E'] }, // outbound: direct to the point
     // School SOP (not the VAC): depart to every point at 5000 ft; arrive over N, W, S at 4500 ft,
-    // over E at 5000 ft, then E-1 at 4000 ft and to the field. (The FlyBy "tunnels" north of the
-    // field are flown at 4000 ft but are not official and not on the navlog.)
+    // over E at 5000 ft, then E-1 at 4500 ft and descend to 4000 ft to the field (SOP2507 p.12
+    // arrival chart). (The FlyBy "tunnels" north of the field are flown at 4000 ft but are not
+    // official and not on the navlog.)
     alt: { dep: 5000, arr: 4500 },
-    pointAlt: { arr: { N: 4500, W: 4500, S: 4500, E: 5000, 'E-1': 4000 } },
-    source: 'LEBG SOP: depart at 5000 ft; arrive N/W/S 4500 ft, E 5000 ft, E-1 4000 ft',
+    pointAlt: { arr: { N: 4500, W: 4500, S: 4500, E: 5000, 'E-1': 4500 } },
+    source: 'LEBG SOP: depart at 5000 ft; arrive N/W/S 4500 ft, E 5000 ft, E-1 4500 ft',
     soloEntry: ['N', 'W'],
   },
   LERJ: {

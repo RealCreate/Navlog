@@ -96,7 +96,7 @@ test('LEBG: straight out to S/E, inbound from S/E via E-1', () => {
   assert.deepEqual(procedureFor('LEBG', 'N', 'arr').points, ['N']);
   assert.equal(procedureFor('LEBG', 'S', 'dep').alt, 5000); // school SOP, not the VAC
   const e = procedureFor('LEBG', 'E', 'arr');
-  assert.equal(e.pointAlt.E, 5000); assert.equal(e.pointAlt['E-1'], 4000);
+  assert.equal(e.pointAlt.E, 5000); assert.equal(e.pointAlt['E-1'], 4500); // SOP2507 p.12
   assert.equal(procedureFor('LEBG', 'N', 'arr').pointAlt.N, 4500);
 });
 
