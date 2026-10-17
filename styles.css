@@ -660,3 +660,15 @@ ul.ready-list li b { font-weight: 700; }
 
 .wp.open [data-collapse] { cursor: pointer; }
 .collapse-btn { font-size: 18px; font-weight: 800; line-height: 1; }
+
+/* Accuracy notice (every app open) */
+.startup-notice { position: fixed; inset: 0; z-index: 10000; display: flex; align-items: center; justify-content: center; padding: calc(16px + var(--safe-t)) 16px calc(16px + var(--safe-b)); background: rgba(0, 0, 0, 0.42); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+.sn-card { width: min(420px, 100%); max-height: 100%; overflow: auto; background: var(--glass-heavy); -webkit-backdrop-filter: blur(40px) saturate(180%); backdrop-filter: blur(40px) saturate(180%); border: 0.5px solid var(--glass-edge); border-radius: 20px; box-shadow: var(--shadow); padding: 24px 22px 18px; color: var(--label); font-family: var(--font); text-align: center; animation: snIn 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.15); }
+.sn-icon svg { width: 40px; height: 40px; fill: none; stroke: var(--warn); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.sn-card h2 { margin: 8px 0 10px; font-size: 19px; font-weight: 700; }
+.sn-card p { margin: 0 0 10px; font-size: 15px; line-height: 1.4; color: var(--label2); }
+.sn-card p b { color: var(--label); }
+.sn-btn { margin-top: 8px; width: 100%; min-height: 48px; border: 0; border-radius: 12px; background: var(--tint); color: #fff; font: 600 16px var(--font); cursor: pointer; }
+.sn-btn:active { opacity: 0.8; }
+@keyframes snIn { from { opacity: 0; transform: scale(0.94); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .sn-card { animation: none; } }

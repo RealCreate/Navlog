@@ -17,6 +17,18 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <!-- Accuracy notice: shown every time the app is opened -->
+  <div class="startup-notice" id="startupNotice" role="alertdialog" aria-modal="true" aria-labelledby="snTitle" aria-describedby="snText">
+    <div class="sn-card">
+      <div class="sn-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 2 20h20L12 3Z"/><path d="M12 10v4.5M12 17.2v.3"/></svg></div>
+      <h2 id="snTitle">Double-check your navlog</h2>
+      <div id="snText">
+        <p>This app is a planning aid. The navlog, M&amp;B, performance and briefing it produces <b>may not be 100&nbsp;% accurate</b>.</p>
+        <p>Check every figure against the school SOPs, the AFM/POH, the official charts (AIP VAC) and the current weather and NOTAMs before you fly. You remain responsible for your flight planning.</p>
+      </div>
+      <button type="button" class="sn-btn" id="snOk">I understand</button>
+    </div>
+  </div>
   <div id="map" aria-label="VFR chart"></div>
 
   <!-- Date & time (top centre of the map area) -->

@@ -3644,6 +3644,22 @@ document.documentElement.classList.toggle('profile-collapsed', !state.view.profi
 setDetent(1, false);
 togglePoints();
 initBase();
+
+// Accuracy notice: shown on every load (static in index.html) and again when the Home Screen app
+// comes back after 15 min or more in the background (iOS often resumes it without reloading).
+(function startupNotice() {
+  const el = document.getElementById('startupNotice');
+  const ok = document.getElementById('snOk');
+  if (!el || !ok) return;
+  let hiddenAt = 0;
+  const show = () => { el.hidden = false; ok.focus(); };
+  ok.addEventListener('click', () => { el.hidden = true; });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) hiddenAt = Date.now();
+    else if (hiddenAt && Date.now() - hiddenAt >= 15 * 60 * 1000) show();
+  });
+  ok.focus();
+})();
 update();
 if (state.main.waypoints.length > 1) setTimeout(fitRoute, 50);
 else setTimeout(() => {
