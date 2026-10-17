@@ -2,7 +2,7 @@ import { AEMET_API_KEY, AEMET_KEY_EXPIRES } from './aemet-key.js';
 import { bestRoute, avoidAreas, nm as nmDist, MAX_LEG_NM } from './routelib.js';
 import { AERODROMES, POINTS, FLEET_TYPES, fleetType, SOP, adByIcao, mergeAip, procedureFor, PROCEDURES } from './data.js';
 import { computeNavlog, stdFlags, fuelPolicy, fmtMMSS, fmtHMS, fmtVar, fmtAlt, parseAlt, cruiseTas, distanceNm, midpoint, trueCourse } from './nav.js';
-import { buildNavlogPdf, buildMbPdf } from './pdf.js';
+import { buildNavlogPdf, buildMbPdf, PER_SIDE } from './pdf.js';
 import { addBriefingPages, addMissionCover, fonts as pdfFonts, pdfText } from './briefpdf.js';
 import { renderRouteMap, addMapPage } from './mapprint.js';
 import { parseBulletin, pdfLines, notamFlags, pdfFirstPageCanvas } from './notam.js';
@@ -757,6 +757,8 @@ function drawRoutes() {
       mk.on('drag', (e) => showSnapHint(nearestRef(e.target.getLatLng())));
       mk.on('dragend', (e) => {
         const ll = e.target.getLatLng();
+        const clearGeo = (x) => { if (x && x.ov) for (const k of Object.keys(x.ov)) { delete x.ov[k].tc; delete x.ov[k].dist; delete x.ov[k].mc; delete x.ov[k].mh; delete x.ov[k].wca; if (!Object.keys(x.ov[k]).length) delete x.ov[k]; } };
+        clearGeo(w); clearGeo(wps[i + 1]);
         const ref = nearestRef(ll);
         showSnapHint(null);
         if (ref && ref.type === 'town') { w.lat = ref.lat; w.lon = ref.lon; w.ref = null; w.town = ref.label; w.name = ref.label; }
@@ -1255,6 +1257,9 @@ function selectWaypoint(id, scroll) {
 }
 
 function headerFor(key) {
+  return { ...headerBase(key), ...((state[key] && state[key].hdrOv) || {}) };
+}
+function headerBase(key) {
   const f = state.flight;
   const t = flightTime();
   const date = t.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' }); // date only (the T/O time is not part of the date box)
@@ -1285,6 +1290,164 @@ function headerFor(key) {
     tom: mb?.lm, lmDest: mb?.lmAlt, lmAlt: '',
     trip, altFuel: '', contingency: Math.round(trip * SOP.contingencyPct) / 100, finalReserve: fp.finalReserve,
   };
+}
+
+/* ---------------- Sheet view: the navlog as the school's LNAV Excel / VOFP form, every cell editable ----------------
+ * Same layout as the printed form: header, then blocks of two lines (waypoint, TC, VAR/MC, ALT, TAS,
+ * wind, WCA/MH, Dist leg/rem, GS, ETE/ATE, ETA/ATA, Fuel/rem), 7 blocks per half, two halves per page.
+ * A typed value overrides the computed one (amber) and flows on through the calculation; clear the
+ * cell to go back to the computed value. */
+const sheetEl = document.getElementById('nlSheet');
+function sheetCell(f, val, { wid = '', k = '', ov = false, cls = '', w = '' } = {}) {
+  return `<input class="sc ${ov ? 'ov' : ''} ${cls}" data-f="${f}" data-wid="${wid}" data-k="${k}" value="${esc(val ?? '')}" ${w ? `style="width:${w}"` : ''} autocomplete="off" autocapitalize="characters" spellcheck="false" enterkeyhint="next">`;
+}
+function renderSheetView() {
+  if (!sheetEl) return;
+  const open = !!state.view.sheetOpen && state.mode === 'plan';
+  sheetEl.hidden = !open;
+  document.body.classList.toggle('sheet-open', open);
+  document.body.classList.toggle('sheet-full', open && !!state.view.sheetFull);
+  if (!open) return;
+  const key = state.active, nl = result[key], h = headerFor(key), hov = (state[key].hdrOv) || {};
+  const wps = state[key].waypoints;
+  const H = (f, v, cls = '') => `<input class="sc h ${hov[f] != null && hov[f] !== '' ? 'ov' : ''} ${cls}" data-h="${f}" value="${esc(v ?? '')}" autocomplete="off" spellcheck="false" enterkeyhint="next">`;
+  const F = (f, v) => `<input class="sc h" data-hf="${f}" value="${esc(v ?? '')}" autocomplete="off" spellcheck="false" autocapitalize="characters" enterkeyhint="next">`;
+  const L = (v) => (v === '' || v == null ? '' : `${Math.round(+v * 100) / 100}`);
+  const fob = state[key] === state.alt ? result.main.rows.at(-1)?.fuelRem ?? '' : state.flight.fob;
+  let html = `<div class="ss-bar"><b>Navlog sheet</b>
+    <div class="segmented small"><button data-ss-route="main" class="${key === 'main' ? 'on' : ''}">Main</button><button data-ss-route="alt" class="${key === 'alt' ? 'on' : ''}">Alternate</button></div>
+    <span class="grow"></span>
+    <button class="btn small" data-ss="reset">Clear manual edits</button>
+    <button class="btn small" data-ss="full">${state.view.sheetFull ? 'Show map' : 'Full screen'}</button>
+    <button class="btn small primary" data-act="pdf">PDF</button>
+    <button class="btn small" data-ss="close" aria-label="Close">✕</button></div>
+  <div class="ss-scroll"><div class="ss-form">
+  <table class="ss-head"><tbody>
+    <tr><td colspan="2" class="ttl">${key === 'alt' ? 'ALT' : 'L1'}</td><td colspan="8" class="ttl">VISUAL OPERATIONAL FLIGHT PLAN</td><td class="lb">Trip Fuel:</td><td>${H('trip', L(h.trip), 'b')}</td></tr>
+    <tr><td class="lb">Date:</td><td>${H('date', h.date)}</td><td class="lb">Departure:</td><td>${H('dep', h.dep, 'b')}</td><td class="lb">Destination:</td><td>${H('dest', h.dest, 'b')}</td><td class="lb">Alternate:</td><td>${H('alt', h.alt, 'b')}</td><td class="lb">Alternate:</td><td>${H('altFuel', L(h.altFuel))}</td><td class="lb">Fuel</td><td>${H('fob', hov.fob ?? fob)}</td></tr>
+    <tr><td class="lb">Callsign:</td><td>${F('callsign', state.flight.callsign)}</td><td class="lb">TOM (kg)</td><td>${H('tom', L(h.tom))}</td><td class="lb">LM (kg)</td><td>${H('lmDest', L(h.lmDest))}</td><td class="lb">LM (kg)</td><td>${H('lmAlt', L(h.lmAlt))}</td><td class="lb">Contingency:</td><td>${H('contingency', L(h.contingency))}</td><td class="lb">Distance</td><td>${H('distance', hov.distance ?? nl.totals.dist)}</td></tr>
+    <tr><td class="lb">Reg:</td><td>${F('reg', state.flight.reg)}</td><td class="lb">Elevation (ft)</td><td>${H('elevDep', h.elevDep)}</td><td class="lb">Elevation (ft)</td><td>${H('elevDest', h.elevDest)}</td><td class="lb">Elevation (ft)</td><td>${H('elevAlt', h.elevAlt)}</td><td class="lb">Final Reserve:</td><td>${H('finalReserve', L(h.finalReserve))}</td><td colspan="2"></td></tr>
+    <tr><td class="lb">Weather Info:</td><td colspan="5">${F('weather', effWeather(state.flight.weather))}</td><td class="lb">AOBT:</td><td>${H('aobt', hov.aobt)}</td><td class="lb">ATOT:</td><td>${H('atot', hov.atot)}</td><td class="lb">LDG / OFF:</td><td>${H('ldg', hov.ldg)}</td></tr>
+    <tr><td class="lb">Frequencies:</td><td colspan="7">${H('freq', h.freq)}</td><td class="lb">Squawk</td><td>${H('squawk', hov.squawk)}</td><td class="lb">Total time</td><td class="tt">${fmtHMS(nl.totals.timeSec)}</td></tr>
+  </tbody></table>`;
+  const rows = nl.rows;
+  const pages = Math.max(1, Math.ceil(rows.length / (PER_SIDE * 2)));
+  const has = (r, f) => r && r.ovr && r.ovr.includes(f);
+  const side = (from) => {
+    let t = `<table class="ss-grid"><colgroup><col class="c-nm">${'<col>'.repeat(12)}</colgroup><thead><tr><th rowspan="2">Waypoint</th><th rowspan="2">TC</th><th>VAR</th><th rowspan="2">ALT /<br>Level</th><th rowspan="2">TAS</th><th colspan="2">Wind</th><th>WCA</th><th>Dist</th><th rowspan="2">GS</th><th>ETE</th><th>ETA</th><th>Fuel</th></tr>
+      <tr><th>MC</th><th>Dir</th><th>Speed</th><th>MH</th><th>Leg / Rem</th><th>ATE</th><th>ATA</th><th>Rem</th></tr></thead><tbody>`;
+    for (let j = 0; j < PER_SIDE; j++) {
+      const r = rows[from + j];
+      if (!r) { t += '<tr class="t"><td></td><td rowspan="2"></td><td></td><td rowspan="2"></td><td rowspan="2"></td><td rowspan="2"></td><td rowspan="2"></td><td></td><td></td><td rowspan="2"></td><td></td><td></td><td></td></tr><tr class="b"><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>'; continue; }
+      const o = { wid: r.wid, k: r.k };
+      const isFirst = from + j === 0;
+      const legEnd = !r.auto; // the row that ends at the leg's waypoint (its altitude is the waypoint's)
+      t += `<tr class="t ${r.auto ? 'auto' : ''}" data-wid="${r.wid}"><td>${isFirst ? sheetCell('from0', wps[0]?.name, { ...o, cls: 'nm' }) : ''}</td>
+        <td rowspan="2">${sheetCell('tc', r.tc, { ...o, ov: has(r, 'tc') })}</td>
+        <td>${sheetCell('var', fmtVar(r.var), o)}</td>
+        <td rowspan="2">${sheetCell('alt', r.altDisp, { ...o, ov: has(r, 'altDisp'), cls: legEnd ? '' : 'auto-alt' })}</td>
+        <td rowspan="2">${sheetCell('tas', r.tas, { ...o, ov: has(r, 'tas') })}</td>
+        <td rowspan="2">${sheetCell('wdir', r.wspd ? String(r.wdir).padStart(3, '0') : '', o)}</td>
+        <td rowspan="2">${sheetCell('wspd', r.wspd || '', o)}</td>
+        <td>${sheetCell('wca', r.wca > 0 ? `+${r.wca}` : r.wca, { ...o, ov: has(r, 'wca') })}</td>
+        <td>${sheetCell('dist', r.dist, { ...o, ov: has(r, 'dist') })}</td>
+        <td rowspan="2">${sheetCell('gs', r.gs, { ...o, ov: has(r, 'gs') })}</td>
+        <td>${sheetCell('ete', fmtMMSS(r.eteSec), { ...o, ov: has(r, 'ete'), cls: r.fixedMin && !has(r, 'ete') ? 'std' : 'b' })}</td>
+        <td>${sheetCell('eta', r.etaOv || '', { ...o, ov: has(r, 'eta') })}</td>
+        <td>${sheetCell('fuel', r.fuel, { ...o, ov: has(r, 'fuel') })}</td></tr>
+        <tr class="b ${r.auto ? 'auto' : ''}" data-wid="${r.wid}"><td>${sheetCell('to', r.to, { ...o, cls: 'nm', ov: has(r, 'to') })}</td>
+        <td>${sheetCell('mc', r.mc, { ...o, ov: has(r, 'mc'), cls: 'b' })}</td>
+        <td>${sheetCell('mh', r.mh, { ...o, ov: has(r, 'mh'), cls: 'b' })}</td>
+        <td>${sheetCell('rem', r.rem, { ...o, ov: has(r, 'rem') })}</td>
+        <td>${sheetCell('ate', r.ateOv || '', { ...o, ov: has(r, 'ate') })}</td>
+        <td>${sheetCell('ata', r.ataOv || '', { ...o, ov: has(r, 'ata') })}</td>
+        <td>${sheetCell('fuelRem', r.fuelRem, { ...o, ov: has(r, 'fuelRem') })}</td></tr>`;
+    }
+    return t + '</tbody></table>';
+  };
+  for (let pg = 0; pg < pages; pg++) {
+    html += `<div class="ss-page">${pages > 1 ? `<div class="ss-pg">Sheet ${pg + 1} of ${pages}</div>` : ''}<div class="ss-halves">${side(pg * PER_SIDE * 2)}${side(pg * PER_SIDE * 2 + PER_SIDE)}</div></div>`;
+  }
+  html += `</div></div><div class="ss-note">Type in any cell — it recalculates like the Excel. <span class="ov-key">Amber</span> = typed by you (clear the cell to go back to the computed value). TOC / TOD rows are added automatically from the altitudes. Moving a point on the map clears the typed TC / distance of its legs.</div>`;
+  const act = document.activeElement, keep = act && act.closest && act.closest('#nlSheet') ? { f: act.dataset.f, h: act.dataset.h, hf: act.dataset.hf, wid: act.dataset.wid, k: act.dataset.k } : null;
+  sheetEl.innerHTML = html;
+  if (keep) {
+    const sel = keep.h ? `[data-h="${keep.h}"]` : keep.hf ? `[data-hf="${keep.hf}"]` : `[data-f="${keep.f}"][data-wid="${keep.wid}"][data-k="${keep.k}"]`;
+    const el = sheetEl.querySelector(sel); if (el) { el.focus(); try { el.select(); } catch { /* not a text field */ } }
+  }
+}
+// parse "12:30" / "12.5" (minutes) into seconds
+const mmssToSec = (v) => { const t = String(v).trim().replace(',', '.'); const m = /^(\d+):(\d{1,2})$/.exec(t); if (m) return +m[1] * 60 + +m[2]; const n = parseFloat(t); return Number.isFinite(n) ? Math.round(n * 60) : null; };
+function sheetEdit(t) {
+  const key = state.active, r = state[key];
+  const v = t.value.trim();
+  if (t.dataset.hf) {
+    const f = t.dataset.hf;
+    if (f === 'callsign') state.flight.callsign = v.toUpperCase();
+    else if (f === 'reg') { const regs = Object.keys(acOf(state.flight.type).regs); const m = regs.find((x) => x.replace('-', '') === v.toUpperCase().replace('-', '')); if (m) state.flight.reg = m; else toast(`Registration: ${regs.join(', ')}`); }
+    else state.flight[f] = v;
+    return;
+  }
+  if (t.dataset.h) {
+    r.hdrOv = r.hdrOv || {};
+    const base = headerBase(key)[t.dataset.h];
+    if (v === '' || String(base ?? '') === v) delete r.hdrOv[t.dataset.h]; else r.hdrOv[t.dataset.h] = v;
+    return;
+  }
+  const f = t.dataset.f, wps = r.waypoints;
+  if (f === 'from0') { if (wps[0] && v) wps[0].name = v; return; }
+  const w = wps.find((x) => x.id === +t.dataset.wid); if (!w) return;
+  const k = +t.dataset.k;
+  const row = result[key].rows.find((x) => x.wid === w.id && x.k === k);
+  const setOv = (field, val) => { w.ov = w.ov || {}; w.ov[k] = w.ov[k] || {}; if (val === '' || val == null) delete w.ov[k][field]; else w.ov[k][field] = val; if (!Object.keys(w.ov[k]).length) delete w.ov[k]; };
+  switch (f) {
+    case 'to': if (row && !row.auto) { if (v) w.name = v; } else setOv('to', v); break;
+    case 'var': { const m = /^([+-]?\d+(?:[.,]\d+)?)\s*([EW])?$/i.exec(v); if (m) { const n = +m[1].replace(',', '.'); w.var = m[2] ? (m[2].toUpperCase() === 'W' ? -Math.abs(n) : Math.abs(n)) : n; } else if (v === '') w.var = ''; break; }
+    case 'alt':
+      if (row && !row.auto) { if (v) { w.alt = /^fl/i.test(v) ? v.toUpperCase().replace(/\s+/g, '') : parseAlt(v); w.altAuto = false; } setOv('altDisp', ''); }
+      else setOv('altDisp', v);
+      break;
+    case 'wdir': { const n = num(v); w.wdir = n === '' ? '' : ((n % 360) + 360) % 360; w.windSrc = 'manual'; break; }
+    case 'wspd': w.wspd = numMin0(v); w.windSrc = 'manual'; break;
+    case 'ete': setOv('ete', v === '' ? '' : mmssToSec(v)); break;
+    case 'eta': case 'ate': case 'ata': setOv(f, v); break;
+    default: { // tc, mc, tas, wca, mh, dist, gs, fuel, rem, fuelRem
+      const n = num(v.replace(/^\+/, ''));
+      const computedNow = row ? row[f] : null;
+      if (n === '' ) setOv(f, ''); else if (computedNow != null && +computedNow === n && !(w.ov && w.ov[k] && w.ov[k][f] != null)) { /* unchanged */ } else setOv(f, n);
+    }
+  }
+}
+if (sheetEl) {
+  sheetEl.addEventListener('change', (e) => {
+    const t = e.target; if (!t.matches('input.sc')) return;
+    sheetEdit(t);
+    setTimeout(() => update({ rerenderPanels: true }), 0); // after focus has moved to the next cell
+  });
+  sheetEl.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || !e.target.matches('input.sc')) return;
+    e.preventDefault();
+    const all = [...sheetEl.querySelectorAll('input.sc')]; const i = all.indexOf(e.target);
+    (all[i + 1] || e.target).focus();
+  });
+  sheetEl.addEventListener('focusin', (e) => {
+    const t = e.target; if (!t.matches('input.sc')) return;
+    try { t.select(); } catch { /* ignore */ }
+    if (t.dataset.wid && +t.dataset.wid !== selectedId) { selectedId = +t.dataset.wid; drawRoutes(); }
+  });
+  sheetEl.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-ss],[data-ss-route],[data-act=pdf]'); if (!b) return;
+    if (b.dataset.act === 'pdf') return downloadPdf();
+    if (b.dataset.ssRoute) { state.active = b.dataset.ssRoute; return update({ rerenderPanels: true }); }
+    const a = b.dataset.ss;
+    if (a === 'close') { state.view.sheetOpen = false; state.view.sheetFull = false; }
+    if (a === 'full') state.view.sheetFull = !state.view.sheetFull;
+    if (a === 'reset') {
+      if (!confirm('Clear every value you typed in the sheet for this route (back to the computed values)?')) return;
+      const r = state[state.active]; r.waypoints.forEach((w) => { delete w.ov; }); delete r.hdrOv;
+    }
+    scheduleSave(); renderSheetView(); setTimeout(() => map.invalidateSize(), 250);
+  });
 }
 
 function renderNavlog() {
@@ -1322,6 +1485,7 @@ function renderNavlog() {
     <div class="row"><span class="grow label">Trip fuel</span><span class="value">${nl.totals.trip.toFixed(2)} L</span></div>
   </div>
   <p class="note">Blue ETEs are SOP standard times (departure ${SOP.stdDepMin} min, arrival ${SOP.stdArrMin} min). TOC/TOD at ${SOP.roc} ft/min using GS; climb ${SOP.tasClimb} kt / ${planSop().ffClimb} L/h, descent ${SOP.tasDescent} kt / ${planSop().ffDescent} L/h, cruise IAS ${planSop().tasBase} kt + 2 kt/1000 ft, ${planSop().ffCruise} L/h (${esc(fleetType(state.flight.type).perf.src)}). ETA, ATE, ATA are filled in flight.</p>
+  <button class="btn wide" data-act="sheetOpen">Open as sheet (LNAV layout, edit every cell) ⤢</button>
   <button class="btn primary wide" data-act="pdf">Download navlog PDF</button>`;
   if (result.main.rows.length) html += `<button class="btn primary wide next-step" data-goto="mb" style="--c: var(--c-mb)">Next · 3 M&amp;B →</button>`;
   panels.navlog.innerHTML = html;
@@ -1331,7 +1495,10 @@ panels.navlog.addEventListener('change', (e) => {
   state.flight[k] = k === 'callsign' ? e.target.value.toUpperCase().trim() : e.target.value;
   update({ rerenderPanels: true });
 });
-panels.navlog.addEventListener('click', (e) => { if (e.target.closest('[data-act=pdf]')) downloadPdf(); });
+panels.navlog.addEventListener('click', (e) => {
+  if (e.target.closest('[data-act=pdf]')) downloadPdf();
+  if (e.target.closest('[data-act=sheetOpen]')) { state.view.sheetOpen = true; scheduleSave(); renderSheetView(); setTimeout(() => map.invalidateSize(), 250); }
+});
 
 // SOP fuel policy: cross-country flights (different departure and destination) depart with full tanks.
 function crossCountryFull() {
@@ -1584,6 +1751,7 @@ function renderMbSummary() {
 document.getElementById('btnMbPdf').addEventListener('click', downloadMbPdf);
 
 function renderPanels() {
+  renderSheetView();
   document.querySelectorAll('#routeSel button').forEach((b) => b.classList.toggle('on', b.dataset.route === state.active));
   document.getElementById('routeSel').hidden = tab === 'fuel';
   if (state.mode === 'mb') return renderMB();

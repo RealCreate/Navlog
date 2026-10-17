@@ -128,3 +128,22 @@ test('LEVD joins via N-1 / S-1 at the VAC heights; LELN via S-1 from S and SE; L
   assert.deepEqual(procedureFor('LEVT', 'E', 'arr').points, ['E']);
   assert.equal(procedureFor('LEVT', 'E', 'arr').alt, 2500);
 });
+
+test('sheet overrides flow on like the Excel (GS → ETE → fuel → remaining fuel)', async () => {
+  const { computeNavlog } = await import('../js/nav.js');
+  const plan = { fob: 100, waypoints: [
+    { id: 1, name: 'A', lat: 42.0, lon: -3.7, alt: 5500 },
+    { id: 2, name: 'B', lat: 42.2, lon: -3.7, alt: 5500, wdir: '', wspd: '' },
+    { id: 3, name: 'C', lat: 42.4, lon: -3.7, alt: 5500 },
+  ] };
+  const base = computeNavlog(plan);
+  plan.waypoints[1].ov = { 0: { gs: 60 } };
+  const o = computeNavlog(plan);
+  const r0 = o.rows.find((r) => r.wid === 2);
+  assert.equal(r0.gs, 60);
+  assert.ok(r0.ovr.includes('gs'));
+  assert.ok(r0.eteSec > base.rows.find((r) => r.wid === 2).eteSec, 'slower GS → longer ETE');
+  assert.ok(o.rows.at(-1).fuelRem < base.rows.at(-1).fuelRem, 'more fuel used → less remaining at the end');
+  plan.waypoints[1].ov = { 0: { ete: 600 } };
+  assert.equal(computeNavlog(plan).rows.find((r) => r.wid === 2).eteSec, 600);
+});

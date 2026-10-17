@@ -163,14 +163,30 @@ export function computeNavlog(plan, s = SOP) {
       alt, altLabel, wdir, wspd, legIndex: leg.i,
     };
 
+    // Cells typed by the student in the sheet view: b.ov[k] holds the overrides of the k-th row of
+    // this leg (a leg can be split at TOC / TOD). Overridden values flow on like in the Excel:
+    // TC → MC/WCA/MH/GS, TAS/wind → WCA/GS, Dist/GS → ETE, ETE → fuel, and everything to the totals.
+    const ovs = b.ov || {};
+    let rowK = 0;
+    const num = (v) => (v === '' || v == null || !Number.isFinite(+v) ? null : +v);
     const segRow = (extra) => {
-      const tas = extra.tas;
-      const wt = windTriangle(tcRounded, tas, wdir, wspd);
+      const k = rowK++, o = ovs[k] || {};
+      const tc = num(o.tc) != null ? hdg(num(o.tc)) : tcRounded;
+      const mc = num(o.mc) != null ? hdg(num(o.mc)) : hdg(tc - vr);
+      const tas = num(o.tas) != null ? num(o.tas) : extra.tas;
+      const wt = windTriangle(tc, tas, wdir, wspd);
       if (wt.error) warnings.push(`${base.from} → ${extra.to}: ${wt.error}`);
-      const row = { ...base, ...extra, wca: wt.wca, mh: hdg(base.mc + wt.wca), gs: wt.gs };
-      if (row.fixedSec != null) row.eteSec = row.fixedSec;
+      const row = { ...base, ...extra, tc, mc, tas, wca: wt.wca, mh: hdg(mc + wt.wca), gs: wt.gs, wid: b.id, k, ovr: Object.keys(o).filter((f) => o[f] !== '' && o[f] != null) };
+      if (num(o.wca) != null) { row.wca = num(o.wca); row.mh = hdg(mc + row.wca); }
+      if (num(o.mh) != null) row.mh = hdg(num(o.mh));
+      if (num(o.dist) != null) row.dist = num(o.dist);
+      if (num(o.gs) != null) row.gs = num(o.gs);
+      if (num(o.ete) != null) row.eteSec = num(o.ete);
+      else if (row.fixedSec != null) row.eteSec = row.fixedSec;
       else row.eteSec = row.gs > 0 ? (row.dist / row.gs) * 3600 : 0;
-      row.fuel = r1((row.eteSec / 3600) * row.ff);
+      row.fuel = num(o.fuel) != null ? num(o.fuel) : r1((row.eteSec / 3600) * row.ff);
+      if (o.to) row.to = o.to;
+      for (const f of ['eta', 'ate', 'ata', 'altDisp', 'rem', 'fuelRem']) if (o[f] != null && o[f] !== '') row[`${f}Ov`] = o[f];
       return row;
     };
 
@@ -218,7 +234,7 @@ export function computeNavlog(plan, s = SOP) {
   // Altitude as printed: flight levels above the transition altitude (QNH 1013), plus climb/descent marker.
   const ta = +plan.ta || 6000;
   rows.forEach((r) => {
-    r.altDisp = fmtLevel(r.alt, r.altLabel, ta, !!plan.altOnly);
+    r.altDisp = r.altDispOv || fmtLevel(r.alt, r.altLabel, ta, !!plan.altOnly);
     r.vs = r.phase === 'climb' ? 'up' : r.phase === 'descent' ? 'down' : null;
   });
 
@@ -229,6 +245,8 @@ export function computeNavlog(plan, s = SOP) {
     rem = r1(rem - r.dist); r.rem = Math.max(0, rem);
     fuelRem = r1(fuelRem - r.fuel); r.fuelRem = fuelRem;
     time += Math.round(r.eteSec); r.cumSec = time;
+    if (r.remOv != null && Number.isFinite(+r.remOv)) { r.rem = +r.remOv; rem = r.rem; }
+    if (r.fuelRemOv != null && Number.isFinite(+r.fuelRemOv)) { r.fuelRem = +r.fuelRemOv; fuelRem = r.fuelRem; }
   });
 
   const trip = r1(rows.reduce((t, r) => t + r.fuel, 0));

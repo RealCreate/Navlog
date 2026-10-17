@@ -9,7 +9,7 @@ import { embedPlan } from './plans.js';
 const H = 595.32; // page height (A4 landscape)
 const BLOCK_TOPS = [227.4, 275.9, 324.3, 373.1, 421.6, 470.0, 519.2];
 const BLOCK_BOTTOM = 567.7;
-const PER_SIDE = BLOCK_TOPS.length;
+export const PER_SIDE = BLOCK_TOPS.length;
 
 // Column edges (pt), measured from the form's printed grid. Both halves have the same columns
 // but slightly different widths, so each half is listed in full.
@@ -142,6 +142,9 @@ function drawRow(page, font, bold, cols, b, r) {
   up('dist', r.dist); dn('dist', r.rem);
   full('gs', r.gs);
   up('ete', fmtMMSS(r.eteSec), bold);
+  if (r.ateOv) dn('ete', r.ateOv);
+  if (r.etaOv) up('eta', r.etaOv);
+  if (r.ataOv) dn('eta', r.ataOv);
   up('fuel', fmtL(r.fuel)); dn('fuel', r.fuelRem);
 }
 
