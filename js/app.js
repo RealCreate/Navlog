@@ -54,6 +54,11 @@ function adWaypoint(ad) {
 }
 
 // a number that could not be read (e.g. typed with a comma by an older version) is saved as null: start it empty
+// Pilot mass: the value typed in the M&B, or "my mass" from Settings
+function stationMass(f, id) {
+  if (id === 'pilot' && (f.pilot === '' || f.pilot == null) && state.settings && state.settings.myMass) return state.settings.myMass;
+  return f[id];
+}
 function cleanNums(o) { return Object.fromEntries(Object.entries(o || {}).map(([k, v]) => [k, v === null || (typeof v === 'number' && !Number.isFinite(v)) ? '' : v])); }
 function load() {
   try {
@@ -916,7 +921,7 @@ function compute() {
   const tripL = useRoute ? main.totals.trip : (+state.mb.tripManual || 0);
   const altL = useRoute ? alt.totals.trip : (+state.mb.altManual || 0);
   const ac = acOf(f.type);
-  const loads = Object.fromEntries(ac.stations.map((st) => [st.id, +f[st.id] || 0]));
+  const loads = Object.fromEntries(ac.stations.map((st) => [st.id, +stationMass(f, st.id) || 0]));
   const empty = ac.regs[f.reg] ? null : [+f.emptyMass || 0, +f.emptyMoment || 0];
   const mb = computeMb(f.type, { reg: f.reg, empty, loads, fobL: +f.fob || 0, tripL, altL });
   return { main, alt, fuel, mb };
@@ -956,7 +961,7 @@ function stepStatus() {
   const done = {
     mission: !!state.mission || state.missionSkipped,
     plan: result.main.rows.length > 0 && (state.alt.waypoints.length > 1 || !!state.mission),
-    mb: !!(result.mb && result.mb.ok && +state.flight.pilot > 0),
+    mb: !!(result.mb && result.mb.ok && +stationMass(state.flight, 'pilot') > 0),
     brief: !!state.briefDone,
   };
   document.querySelectorAll('#modes [data-mode]').forEach((x) => x.classList.toggle('done', !!done[x.dataset.mode]));
@@ -1652,7 +1657,10 @@ function renderMB() {
   for (const st of ac.stations) {
     const ph = st.id === 'pilot' ? 'real mass' : st.id === 'copilot' ? '0 if solo' : '0';
     const hint = [U === 'lb' && +f[st.id] ? `${(+f[st.id] * KG_TO_LB).toFixed(1)} lb` : '', st.max ? `max ${st.max} ${U}` : ''].filter(Boolean).join(' · ');
-    html += `<label class="field"><span>${esc(st.label)} (kg)</span><input data-ff="${st.id}" inputmode="decimal" value="${esc(f[st.id] ?? '')}" placeholder="${ph}">${hint ? `<small class="label">${hint}</small>` : ''}</label>`;
+    const fromSettings = st.id === 'pilot' && (f.pilot === '' || f.pilot == null) && state.settings.myMass;
+    const ins = st.id === 'copilot' && (state.settings.instructors || []).filter((x) => x.name && +x.mass > 0);
+    const pick = ins && ins.length ? `<select data-ins-pick class="ins-pick"><option value="">Instructor…</option>${ins.map((x) => `<option value="${esc(x.name)}" ${f.instructor === x.name && +f.copilot === +x.mass ? 'selected' : ''}>${esc(x.name)} · ${x.mass} kg</option>`).join('')}</select>` : '';
+    html += `<label class="field"><span>${esc(st.label)} (kg)</span><input data-ff="${st.id}" inputmode="decimal" value="${esc(stationMass(f, st.id) ?? '')}" placeholder="${ph}">${fromSettings ? '<small class="label">from Settings</small>' : hint ? `<small class="label">${hint}</small>` : ''}${pick}</label>`;
   }
   html += `</div><div class="row wrap">
     <label class="field"><span>Fuel on board (L)</span><input data-ff="fob" inputmode="decimal" value="${esc(f.fob)}"><small class="label">max usable ${ac.fuelMaxL} L</small></label>
@@ -1707,6 +1715,11 @@ function renderMB() {
 }
 panels.mb.addEventListener('change', (e) => {
   const t = e.target;
+  if (t.hasAttribute('data-ins-pick')) {
+    const x = (state.settings.instructors || []).find((i) => i.name === t.value);
+    if (x) { state.flight.copilot = +x.mass; state.flight.instructor = x.name; } else state.flight.instructor = '';
+    return update({ rerenderPanels: true });
+  }
   if (t.dataset.ff) {
     const k = t.dataset.ff;
     if (k === 'type') { state.flight.type = t.value; state.flight.reg = Object.keys(acOf(t.value).regs)[0] || ''; state.flight.fob = Math.min(+state.flight.fob || 0, acOf(t.value).fuelMaxL) || acOf(t.value).fuelMaxL; }
@@ -2210,6 +2223,47 @@ function renderBriefing() {
   panels.brief.innerHTML = html;
 }
 
+/* ---------------- Ready offline? ----------------
+ * What the app needs without signal: its own files, the AIP / obstacle / town data, and the chart
+ * tiles around the route (saved with "Save chart for offline"). */
+const OFFLINE_DATA = ['data/aip.json', 'data/obstacles.json', 'data/places.json'];
+const SHELL_CACHE_NAME = () => offlineShellName || 'navlog-shell';
+let offlineShellName = null;
+async function offlineStatus() {
+  const out = [];
+  if (!('caches' in window) || !navigator.serviceWorker) return [{ ok: false, text: 'This browser cannot keep the app offline' }];
+  const keys = await caches.keys();
+  offlineShellName = keys.filter((k) => /^navlog-shell-v\d+$/.test(k)).sort((a, b) => +b.split('v').pop() - +a.split('v').pop())[0] || null;
+  const shell = offlineShellName ? await caches.open(offlineShellName) : null;
+  const has = async (u) => !!(shell && await shell.match(u, { ignoreSearch: true }));
+  out.push({ ok: !!navigator.serviceWorker.controller && await has('js/app.js'), text: 'App saved on this device' });
+  out.push({ ok: await has('data/aip.json'), text: 'Aerodromes, reporting points and airspaces (AIP)' });
+  out.push({ ok: await has('data/obstacles.json'), text: 'Obstacles (minimum-altitude check)' });
+  out.push({ ok: await has('data/places.json'), text: 'Town names' });
+  // chart tiles along the route at the zooms used for planning
+  const all = [...state.main.waypoints, ...state.alt.waypoints];
+  const own = state.view.base !== 'vfr' && ownMeta;
+  const cache = await caches.open(own ? 'navlog-ownchart-v1' : 'navlog-tiles-v1');
+  if (all.length) {
+    let need = 0, got = 0;
+    for (const z of [9, 10]) for (const w of all) {
+      const p = map.project([w.lat, w.lon], z).divideBy(256).floor();
+      need++; if (await cache.match(`${own ? 'chart' : 'tiles'}/${z}/${p.x}/${p.y}.webp`, { ignoreSearch: true })) got++;
+    }
+    out.push({ ok: got === need, text: got === need ? 'Chart along your route' : `Chart along your route — ${Math.round((got / need) * 100)} % saved: use “Save chart for offline” in the layers menu` });
+  } else out.push({ ok: null, text: 'Chart along your route — plan a route, then “Save chart for offline” in the layers menu' });
+  return out;
+}
+async function renderOfflineBox() {
+  const el = document.getElementById('offlineBox'); if (!el) return;
+  try {
+    const st = await offlineStatus();
+    const all = st.every((x) => x.ok !== false);
+    el.innerHTML = `<div class="row"><span class="grow"><b>${all ? 'Ready offline ✓' : 'Not fully ready offline'}</b></span><button class="btn small" data-act="offlineSave">Save chart for offline</button></div>
+      <ul class="issues">${st.map((x) => `<li class="${x.ok ? 'ok' : x.ok === false ? 'warn' : 'info'}"><span class="ic">${x.ok ? '✓' : x.ok === false ? '!' : 'i'}</span><span>${esc(x.text)}</span></li>`).join('')}</ul>`;
+  } catch (err) { el.textContent = 'Could not check the offline storage'; }
+}
+
 /* ---------------- Settings ---------------- */
 function renderSettings() {
   const st = state.settings;
@@ -2232,10 +2286,18 @@ function renderSettings() {
     <div class="row"><span class="grow label">FBYxxY: xx is your instructor's number, Y the time-of-day letter. The inbound callsign is the next letter (FBY12A → FBY12B).</span></div></div>
   <div class="group-title"><span>My unlocked aerodromes</span></div><div class="group"><div class="chips">${EASY_FIRST.map((ad) => `<label><input type="checkbox" data-unlock="${ad}" ${state.unlocked.includes(ad) ? 'checked' : ''}>${ad}</label>`).join('')}</div></div>
   <p class="note">Solo flights only go to aerodromes already flown with an instructor (solo manual).</p>
+  <div class="group-title"><span>Masses for the M&amp;B</span></div><div class="group pad">
+    <div class="row wrap"><label class="field narrow"><span>My mass (kg)</span><input data-set="myMass" inputmode="decimal" value="${esc(st.myMass ?? '')}" placeholder="e.g. 73"></label>
+      <span class="grow label" style="align-self:center">Filled in as the pilot on every new M&amp;B (you can still change it there).</span></div>
+    <div class="label" style="margin:6px 0 4px">Instructors — pick them as copilot in the M&amp;B</div>
+    ${(st.instructors || []).map((x, i) => `<div class="row wrap"><label class="field"><span>Name</span><input data-ins="name" data-i="${i}" value="${esc(x.name)}"></label><label class="field narrow"><span>Mass (kg)</span><input data-ins="mass" data-i="${i}" inputmode="decimal" value="${esc(x.mass ?? '')}"></label><button class="btn small danger" data-act="insDel" data-i="${i}" style="align-self:flex-end">Remove</button></div>`).join('')}
+    <div class="row"><button class="btn small" data-act="insAdd">+ Add instructor</button></div></div>
+  <div class="group-title"><span>Offline</span></div><div class="group pad" id="offlineBox"><div class="label">Checking…</div></div>
   <div class="group-title"><span>AEMET surface pressure chart</span></div><div class="group pad"><div class="label">${aemetExpired() ? `The AEMET OpenData key expired on ${AEMET_KEY_EXPIRES} — it needs renewing in the app.` : `Built into the app · AEMET OpenData key valid until ${AEMET_KEY_EXPIRES}.`}</div></div>
   <p class="note">Settings stay on this device.</p>`;
   panels.settings.innerHTML = html;
   sigInit();
+  renderOfflineBox();
 }
 function sigInit() {
   const c = document.getElementById('sigPad'); if (!c) return;
@@ -2263,6 +2325,10 @@ function sigInit() {
   c.addEventListener('pointerup', end); c.addEventListener('pointercancel', end);
 }
 panels.settings.addEventListener('click', (e) => {
+  if (e.target.closest('[data-act=insAdd]')) { (state.settings.instructors = state.settings.instructors || []).push({ name: '', mass: '' }); scheduleSave(); return renderSettings(); }
+  const del = e.target.closest('[data-act=insDel]');
+  if (del) { state.settings.instructors.splice(+del.dataset.i, 1); scheduleSave(); return renderSettings(); }
+  if (e.target.closest('[data-act=offlineSave]')) return document.getElementById('btnOffline').click();
   if (e.target.closest('[data-act=sigClear]')) {
     const c = document.getElementById('sigPad'); c.getContext('2d').clearRect(0, 0, c.width, c.height);
     state.settings.signature = ''; state.settings.signaturePad = ''; scheduleSave();
@@ -2270,7 +2336,9 @@ panels.settings.addEventListener('click', (e) => {
 });
 panels.settings.addEventListener('change', (e) => {
   const t = e.target;
+  if (t.dataset.set === 'myMass') { state.settings.myMass = numMin0(t.value); update({ rerenderPanels: false }); scheduleSave(); return; }
   if (t.dataset.set) { const k = t.dataset.set; state.settings[k] = k === 'name' ? t.value.trim() : t.value.toUpperCase().trim(); scheduleSave(); }
+  if (t.dataset.ins) { const l = state.settings.instructors || (state.settings.instructors = []); const x = l[+t.dataset.i]; if (x) { x[t.dataset.ins] = t.dataset.ins === 'mass' ? numMin0(t.value) : t.value.trim(); scheduleSave(); } }
   if (t.dataset.mb) { state.mb[t.dataset.mb] = t.value.toUpperCase().trim(); scheduleSave(); }
   if (t.dataset.unlock) {
     const ad = t.dataset.unlock;
@@ -2812,7 +2880,8 @@ document.getElementById('btnHome').addEventListener('click', () => {
 
 // Save the VFR chart around the route (or Burgos area) for offline use.
 document.getElementById('btnOffline').addEventListener('click', async () => {
-  if (!chartMeta) return toast('VFR chart tiles are not available yet.');
+  const own = state.view.base !== 'vfr' && ownMeta;
+  if (!own && !chartMeta) return toast('VFR chart tiles are not available yet.');
   const all = [...state.main.waypoints, ...state.alt.waypoints];
   const ml = state.mission && state.mission.legs.find((l) => l.id === state.mission.active);
   const tgt = ml && ml.target && adByIcao(ml.target);
@@ -2822,14 +2891,18 @@ document.getElementById('btnOffline').addEventListener('click', async () => {
   const pad = 0.4; // ~25 NM margin
   b = L.latLngBounds([b.getSouth() - pad, b.getWest() - pad], [b.getNorth() + pad, b.getEast() + pad]);
   const urls = [];
-  for (let z = 6; z <= 12; z++) {
+  const z0 = own ? (ownMeta.zmin || 7) : 6, z1 = own ? Math.min(12, ownMeta.zmax || 12) : 12;
+  for (let z = z0; z <= z1; z++) {
     const p1 = map.project(b.getNorthWest(), z).divideBy(256).floor();
     const p2 = map.project(b.getSouthEast(), z).divideBy(256).floor();
-    for (let x = p1.x; x <= p2.x; x++) for (let y = p1.y; y <= p2.y; y++) urls.push(`tiles/${z}/${x}/${y}.webp`);
+    for (let x = p1.x; x <= p2.x; x++) for (let y = p1.y; y <= p2.y; y++) urls.push(`${own ? 'chart' : 'tiles'}/${z}/${x}/${y}.webp`);
   }
   layersPop.hidden = true;
   let done = 0;
-  const cache = await caches.open('navlog-tiles-v1');
+  // the data the planner needs offline too (obstacles, names, AIP)
+  try { const c = await caches.open(SHELL_CACHE_NAME()); await Promise.all(OFFLINE_DATA.map(async (u) => { try { const r = await fetch(u, { cache: 'no-cache' }); if (r.ok) await c.put(u, r); } catch { /* offline */ } })); } catch { /* no cache storage */ }
+  state.view.offlineBox = [b.getSouth(), b.getWest(), b.getNorth(), b.getEast(), own ? 'chart' : 'tiles']; scheduleSave();
+  const cache = await caches.open(own ? 'navlog-ownchart-v1' : 'navlog-tiles-v1');
   const queue = [...urls];
   async function worker() {
     while (queue.length) {
@@ -2840,6 +2913,7 @@ document.getElementById('btnOffline').addEventListener('click', async () => {
   }
   await Promise.all(Array.from({ length: 6 }, worker));
   toast(`Chart saved for offline (${urls.length} tiles)`);
+  if (state.mode === 'settings') renderSettings();
 });
 
 /* ---------------- Mission (Phase 3 / solo manual) ----------------

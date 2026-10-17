@@ -1,9 +1,10 @@
 // Offline support: app shell is precached; chart tiles are cached as they are viewed
 // (or saved in bulk with "Save chart for offline").
-const VERSION = 'navlog-shell-v45';
+const VERSION = 'navlog-shell-v46';
 const TERRAIN = 'navlog-terrain-v1';
 const TILES = 'navlog-tiles-v1';
 const OWNCHART = 'navlog-ownchart-v1';
+const OPTIONAL = ['data/obstacles.json'];
 const SHELL = [
   './', 'index.html', 'styles.css', 'manifest.webmanifest',
   'js/app.js', 'js/data.js', 'js/nav.js', 'js/pdf.js', 'js/sun.js', 'js/profile.js', 'js/places.js', 'js/winds.js', 'js/weather.js', 'js/rules.js', 'js/plans.js', 'js/time.js', 'js/mb.js', 'js/mbpdf.js', 'js/perf.js', 'js/briefpdf.js', 'js/mapprint.js', 'js/notam.js', 'js/aviation.js', 'js/aemet-key.js', 'js/routelib.js', 'vendor/pdfjs/pdf.min.mjs', 'vendor/pdfjs/pdf.worker.min.mjs', 'data/aip.json',
@@ -13,7 +14,11 @@ const SHELL = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(VERSION).then(async (c) => {
+    await c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' })));
+    // data that may be missing on a fresh deploy: cached if present, never blocks the update
+    await Promise.allSettled(OPTIONAL.map(async (u) => { const r = await fetch(u, { cache: 'reload' }); if (r.ok) await c.put(u, r); }));
+  }).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
