@@ -1418,6 +1418,7 @@ function sheetEdit(t) {
     }
   }
 }
+document.getElementById('btnSheet')?.addEventListener('click', () => { state.view.sheetOpen = true; scheduleSave(); renderSheetView(); setTimeout(() => map.invalidateSize(), 250); });
 if (sheetEl) {
   sheetEl.addEventListener('change', (e) => {
     const t = e.target; if (!t.matches('input.sc')) return;
@@ -1485,7 +1486,6 @@ function renderNavlog() {
     <div class="row"><span class="grow label">Trip fuel</span><span class="value">${nl.totals.trip.toFixed(2)} L</span></div>
   </div>
   <p class="note">Blue ETEs are SOP standard times (departure ${SOP.stdDepMin} min, arrival ${SOP.stdArrMin} min). TOC/TOD at ${SOP.roc} ft/min using GS; climb ${SOP.tasClimb} kt / ${planSop().ffClimb} L/h, descent ${SOP.tasDescent} kt / ${planSop().ffDescent} L/h, cruise IAS ${planSop().tasBase} kt + 2 kt/1000 ft, ${planSop().ffCruise} L/h (${esc(fleetType(state.flight.type).perf.src)}). ETA, ATE, ATA are filled in flight.</p>
-  <button class="btn wide" data-act="sheetOpen">Open as sheet (LNAV layout, edit every cell) ⤢</button>
   <button class="btn primary wide" data-act="pdf">Download navlog PDF</button>`;
   if (result.main.rows.length) html += `<button class="btn primary wide next-step" data-goto="mb" style="--c: var(--c-mb)">Next · 3 M&amp;B →</button>`;
   panels.navlog.innerHTML = html;
@@ -1497,7 +1497,6 @@ panels.navlog.addEventListener('change', (e) => {
 });
 panels.navlog.addEventListener('click', (e) => {
   if (e.target.closest('[data-act=pdf]')) downloadPdf();
-  if (e.target.closest('[data-act=sheetOpen]')) { state.view.sheetOpen = true; scheduleSave(); renderSheetView(); setTimeout(() => map.invalidateSize(), 250); }
 });
 
 // SOP fuel policy: cross-country flights (different departure and destination) depart with full tanks.

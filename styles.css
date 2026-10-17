@@ -536,3 +536,5 @@ input.sc.ov, .ov-key { background: #ffe7a8; }
 .ss-head input.sc.ov { background: #ffe7a8; }
 .ss-note { padding: 8px 12px 14px; font-size: 12.5px; color: #444; background: #fff; border-top: 1px solid #d6d2c8; }
 .ov-key { padding: 0 4px; border-radius: 3px; }
+
+.sheet-open-btn { margin-top: 8px; width: 100%; }
